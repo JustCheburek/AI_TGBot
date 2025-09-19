@@ -3,6 +3,7 @@ import re
 import logging
 import asyncio
 from dotenv import load_dotenv
+import re
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -15,7 +16,7 @@ from collections import deque, defaultdict
 from typing import Deque, Dict, Tuple
 
 # ==== OpenAI (официальный клиент) ====
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, RateLimitError, APIError
 
 # === Загрузка переменных окружения ===
 load_dotenv()
@@ -40,12 +41,56 @@ dp = Dispatcher()
 openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # глобальная переменная для хранения username бота (без @)
-bot_username = "MineBridgeRegistrationBot"
+bot_username = "minebridge52bot"
 
-# === Контекст 8 сообщений ===
-MAX_HISTORY_MESSAGES = 8  # храним всего 5 последних сообщений (user/assistant вперемешку)
+# === Контекст N сообщений ===
+MAX_HISTORY_MESSAGES = 8  # храним всего N последних сообщений (user/assistant вперемешку)
 HistoryKey = Tuple[int, int]  # (chat_id, user_id)
 HISTORY: Dict[HistoryKey, Deque[Tuple[str, str]]] = defaultdict(lambda: deque(maxlen=MAX_HISTORY_MESSAGES))
+
+# retry params for OpenAI rate limits
+MAX_OPENAI_RETRIES = 5
+OPENAI_BACKOFF_BASE = 1.5  # seconds, will use exponential backoff capped below
+
+async def _extract_retry_after_seconds(err) -> float | None:
+    """Попытаться извлечь время ожидания из ошибки OpenAI (headers/атрибуты/текст)."""
+    # 1) retry-after в headers (если есть)
+    try:
+        headers = getattr(err, "headers", None) or {}
+        if headers:
+            ra = headers.get("retry-after") or headers.get("Retry-After")
+            if ra:
+                try:
+                    return float(ra)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # 2) retry_after атрибут
+    try:
+        ra = getattr(err, "retry_after", None)
+        if ra is not None:
+            return float(ra)
+    except Exception:
+        pass
+
+    # 3) попытка распарсить сообщение вида "Please try again in 7m12s" или "in 20s"
+    try:
+        msg = str(err)
+        m = re.search(r'(\d+)\s*m(?:in)?\s*(\d+)\s*s', msg)
+        if m:
+            return int(m.group(1)) * 60 + int(m.group(2))
+        m2 = re.search(r'in\s*(\d+)\s*s', msg)
+        if m2:
+            return int(m2.group(1))
+        m3 = re.search(r'(\d+)\s*seconds', msg)
+        if m3:
+            return int(m3.group(1))
+    except Exception:
+        pass
+
+    return None
 
 def _shorten(s: str, limit: int = 300) -> str:
     s = (s or "").strip()
@@ -145,16 +190,35 @@ async def ask_openai(user_text: str, name: str, conv_key: HistoryKey) -> str | N
             name, (prompt[:80] + '...') if len(prompt) > 80 else prompt
         )
 
-        resp = await openai_client.responses.create(
-            model="gpt-4o-mini",
-            instructions="Бот, отвечающий на вопросы пользователей о Minecraft сервере MineBridge. Сайт: майнбридж.рф",
-            input=input_with_ctx,
-            temperature=0.5,
-        )
+        # --- вызов OpenAI с retry при rate-limit'ах ---
+        attempt = 0
+        while True:
+            try:
+                resp = await openai_client.responses.create(
+                    model="gpt-4o-mini",
+                    instructions="Бот, отвечающий на вопросы пользователей о Minecraft сервере MineBridge. Сайт: майнбридж.рф",
+                    input=input_with_ctx,
+                    temperature=0.5,
+                )
+                break
+            except (RateLimitError, APIError) as e:
+                attempt += 1
+                if attempt > MAX_OPENAI_RETRIES:
+                    logging.exception("OpenAI rate limit: max retries reached")
+                    return None
+                wait = await _extract_retry_after_seconds(e) or min(OPENAI_BACKOFF_BASE * (2 ** (attempt - 1)), 60)
+                logging.warning("OpenAI rate-limit/API error, retry %d/%d after %.1fs: %s", attempt, MAX_OPENAI_RETRIES, wait, e)
+                await asyncio.sleep(wait)
+            except Exception:
+                logging.exception("OpenAI error (non-stream)")
+                return None
+        # --- конец вызова OpenAI с retry ---
+
         text = resp.output_text
         if text:
             remember_assistant(conv_key, text)
         return text
+    
     except Exception:
         logging.exception("OpenAI error (non-stream)")
         return None
@@ -179,26 +243,38 @@ async def stream_openai(user_text: str, name: str, conv_key: HistoryKey):
         name, (prompt[:80] + '...') if len(prompt) > 80 else prompt
     )
 
-    # официальный стрим SDK
-    async with openai_client.responses.stream(
-        model="gpt-4o-mini",
-        instructions="Бот, отвечающий на вопросы пользователей о Minecraft сервере MineBridge. Сайт: майнбридж.рф.",
-        input=input_with_ctx,
-        temperature=0.5,
-    ) as stream:
-        full_text_parts: list[str] = []
-        async for event in stream:
-            if event.type == "response.output_text.delta":
-                delta = event.delta or ""
-                full_text_parts.append(delta)
-                yield delta
-            elif event.type == "response.error":
-                raise RuntimeError(getattr(event, "error", "OpenAI streaming error"))
-        # Финальный ответ
-        final_resp = await stream.get_final_response()
-        final_text = "".join(full_text_parts) if full_text_parts else getattr(final_resp, "output_text", "") or ""
-        if final_text.strip():
-            remember_assistant(conv_key, final_text)
+    # официальный стрим SDK с retry на rate-limit
+    attempt = 0
+    while True:
+        try:
+            async with openai_client.responses.stream(
+                model="gpt-4o-mini",
+                instructions="Бот, отвечающий на вопросы пользователей о Minecraft сервере MineBridge. Сайт: майнбридж.рф.",
+                input=input_with_ctx,
+                temperature=0.5,
+            ) as stream:
+                full_text_parts: list[str] = []
+                async for event in stream:
+                    if event.type == "response.output_text.delta":
+                        delta = event.delta or ""
+                        full_text_parts.append(delta)
+                        yield delta
+                    elif event.type == "response.error":
+                        raise RuntimeError(getattr(event, "error", "OpenAI streaming error"))
+                # Финальный ответ
+                final_resp = await stream.get_final_response()
+                final_text = "".join(full_text_parts) if full_text_parts else getattr(final_resp, "output_text", "") or ""
+                if final_text.strip():
+                    remember_assistant(conv_key, final_text)
+            break  # успешный стрим — выходим из retry-цикла
+        except (RateLimitError, APIError) as e:
+            attempt += 1
+            if attempt > MAX_OPENAI_RETRIES:
+                logging.exception("OpenAI streaming rate limit: max retries reached")
+                raise
+            wait = await _extract_retry_after_seconds(e) or min(OPENAI_BACKOFF_BASE * (2 ** (attempt - 1)), 60)
+            logging.warning("OpenAI streaming rate-limit/API error, retry %d/%d after %.1fs: %s", attempt, MAX_OPENAI_RETRIES, wait, e)
+            await asyncio.sleep(wait)
 
 
 # === Проверка упоминания бота или ответа ===
@@ -376,34 +452,34 @@ async def auto_reply(message: types.Message):
         except Exception:
             logging.exception("Streaming failed; falling back to non-stream response")
             # Fallback: однократный запрос
-            username = (message.from_user.username or f"{message.from_user.first_name}")
-            resp = await ask_openai(message.text, username, make_key(message))
+            # username = (message.from_user.username or f"{message.from_user.first_name}")
+            # resp = await ask_openai(message.text, username, make_key(message))
 
-            if resp is None:
-                await safe_edit("Не удалось получить ответ — попробуйте позже.")
-                return
+            # if resp is None:
+            #     await safe_edit("Не удалось получить ответ — попробуйте позже.")
+            #     return
 
-            resp_text = str(resp).strip()
-            if not resp_text:
-                await safe_edit("Не удалось получить ответ — попробуйте позже.")
-                return
+            # resp_text = str(resp).strip()
+            # if not resp_text:
+            #     await safe_edit("Не удалось получить ответ — попробуйте позже.")
+            #     return
 
-            # Telegram limit — используем 4000 символов для безопасности
-            CHUNK = 4000
-            if len(resp_text) <= CHUNK:
-                await safe_edit(resp_text)
-            else:
-                first = resp_text[:CHUNK]
-                ok = await safe_edit(first)
-                if ok:
-                    rest = resp_text[CHUNK:]
-                    # отправляем оставшееся как дополнительные сообщения по частям
-                    for i in range(0, len(rest), CHUNK):
-                        part = rest[i:i + CHUNK]
-                        new_msg = await safe_send_reply(part)
-                        if new_msg is None:
-                            logging.error("Failed to send continuation part starting at %d", CHUNK + i)
-                            break
+            # # Telegram limit — используем 4000 символов для безопасности
+            # CHUNK = 4000
+            # if len(resp_text) <= CHUNK:
+            #     await safe_edit(resp_text)
+            # else:
+            #     first = resp_text[:CHUNK]
+            #     ok = await safe_edit(first)
+            #     if ok:
+            #         rest = resp_text[CHUNK:]
+            #         # отправляем оставшееся как дополнительные сообщения по частям
+            #         for i in range(0, len(rest), CHUNK):
+            #             part = rest[i:i + CHUNK]
+            #             new_msg = await safe_send_reply(part)
+            #             if new_msg is None:
+            #                 logging.error("Failed to send continuation part starting at %d", CHUNK + i)
+            #                 break
 
     except Exception:
         logging.exception("Ошибка в auto_reply (stream loop)")
