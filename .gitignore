@@ -1,0 +1,45 @@
+# ---- Python bytecode / caches ----
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ---- Virtual environments ----
+.venv/
+venv/
+env/
+ENV/
+
+# ---- Packaging / build ----
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+pip-wheel-metadata/
+
+# ---- Test / coverage / tooling ----
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.mypy_cache/
+.pytype/
+.ruff_cache/
+
+# ---- Logs / OS / editors ----
+*.log
+*.sqlite3
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# ---- Local settings / environment ----
+# Common dotenv files
+.env
+.env.*
+*.env
+
+# Optional: keep a template tracked
+# !.env.example
