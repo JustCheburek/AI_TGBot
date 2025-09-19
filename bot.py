@@ -233,10 +233,6 @@ async def auto_reply(message: types.Message):
         await message.answer("Подпишитесь на @MineBridgeOfficial, чтобы пользоваться ботом.")
         return
 
-    if message.text.strip().lower() in ("status", "сервер", "статус", "offline", "офлайн"):
-        await message.reply("Майнкрафт сервер *временно оффлайн*.")
-        return
-
     # === ВАЖНО: требуем упоминание только в группах/супергруппах ===
     is_group = message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
     if is_group and not is_mentioned_or_reply(message):
@@ -317,7 +313,7 @@ async def auto_reply(message: types.Message):
 
         # Параметры троттлинга для стрима
         CHUNK = 4000               # лимит Telegram для Markdown с запасом
-        SEND_MIN_CHARS = 220       # минимум новых символов, чтобы делать edit
+        SEND_MIN_CHARS = 100       # минимум новых символов, чтобы делать edit
         SEND_MIN_SECONDS = 1.2     # минимум секунд между edit'ами одного сообщения
 
         # Попробуем стрим
