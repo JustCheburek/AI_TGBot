@@ -4,6 +4,7 @@ import logging
 import asyncio
 from dotenv import load_dotenv
 import re
+from pathlib import Path
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -49,7 +50,7 @@ HistoryKey = Tuple[int, int]  # (chat_id, user_id)
 HISTORY: Dict[HistoryKey, Deque[Tuple[str, str]]] = defaultdict(lambda: deque(maxlen=MAX_HISTORY_MESSAGES))
 
 # retry params for OpenAI rate limits
-MAX_OPENAI_RETRIES = 5
+MAX_OPENAI_RETRIES = 2
 OPENAI_BACKOFF_BASE = 1.5  # seconds, will use exponential backoff capped below
 
 async def _extract_retry_after_seconds(err) -> float | None:
@@ -131,6 +132,51 @@ async def on_startup():
     except Exception:
         logging.exception("Failed to get bot username on startup")
 
+# === Загрузка системного промта из .txt ===
+PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
+_PROMPT_CACHE: Dict[str, Tuple[float, str]] = {}
+
+def _read_txt_prompt(path: Path) -> str:
+    """
+    Читает текстовый файл промта как есть (UTF-8), кэширует по mtime.
+    Подрезает BOM и лишние пробелы по краям.
+    """
+    mtime = path.stat().st_mtime  # FileNotFoundError пробросится выше — поймаем выше
+    cache_key = str(path)
+    cached = _PROMPT_CACHE.get(cache_key)
+    if cached and cached[0] == mtime:
+        return cached[1]
+
+    raw = path.read_text(encoding="utf-8")
+    # убрать BOM, нормализовать переводы строк, обрезать края
+    if raw.startswith("\ufeff"):
+        raw = raw.lstrip("\ufeff")
+    text = raw.replace("\r\n", "\n").replace("\r", "\n").strip()
+
+    _PROMPT_CACHE[cache_key] = (mtime, text)
+    return text
+
+def load_system_prompt_for_chat(chat: types.Chat) -> str:
+    """
+    Для групп/супергрупп сначала пробуем prompts/<chat_id>.txt,
+    иначе — prompts/default.txt. При любой ошибке — встроенный fallback.
+    """
+    try:
+        if chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
+            group_path = PROMPTS_DIR / f"{chat.id}.txt"
+            if group_path.exists():
+                return _read_txt_prompt(group_path)
+        # fallback: default.txt
+        default_path = PROMPTS_DIR / "default.txt"
+        return _read_txt_prompt(default_path)
+    except FileNotFoundError:
+        logging.warning("Prompt .txt file not found; using builtin fallback")
+    except Exception as e:
+        logging.exception("Failed to load .txt prompt: %s", e)
+
+    # Встроенный запасной промт
+    return "Пиши что я сегодня не смогу помочь, мой системный промт сломался."
+
 
 # === Подписка ===
 async def is_subscribed(user_id: int) -> bool:
@@ -172,60 +218,8 @@ async def callback_any(query: types.CallbackQuery):
         await query.answer("Подписка не найдена. Убедитесь, что подписаны на канал.", show_alert=True)
 
 
-# === GPT-ответ через OpenAI (не-стрим, как fallback) ===
-async def ask_openai(user_text: str, name: str, conv_key: HistoryKey) -> str | None:
-    """Запрос к OpenAI без стрима. Возвращает текст или None при ошибке."""
-    try:
-        prompt = (user_text or "").strip()
-        if not prompt:
-            return None
-        prompt = _shorten(prompt)  # легкая отсечка длины
-
-        # Сначала соберём вход с контекстом, затем запомним реплику пользователя
-        input_with_ctx = build_input_with_history(conv_key, prompt, name)
-        remember_user(conv_key, prompt)
-
-        logging.info(
-            "Calling OpenAI (non-stream) for user '%s' prompt='%s'",
-            name, (prompt[:80] + '...') if len(prompt) > 80 else prompt
-        )
-
-        # --- вызов OpenAI с retry при rate-limit'ах ---
-        attempt = 0
-        while True:
-            try:
-                resp = await openai_client.responses.create(
-                    model="gpt-4o-mini",
-                    instructions="Бот, отвечающий на вопросы пользователей о Minecraft сервере MineBridge. Сайт: майнбридж.рф",
-                    input=input_with_ctx,
-                    temperature=0.5,
-                )
-                break
-            except (RateLimitError, APIError) as e:
-                attempt += 1
-                if attempt > MAX_OPENAI_RETRIES:
-                    logging.exception("OpenAI rate limit: max retries reached")
-                    return None
-                wait = await _extract_retry_after_seconds(e) or min(OPENAI_BACKOFF_BASE * (2 ** (attempt - 1)), 60)
-                logging.warning("OpenAI rate-limit/API error, retry %d/%d after %.1fs: %s", attempt, MAX_OPENAI_RETRIES, wait, e)
-                await asyncio.sleep(wait)
-            except Exception:
-                logging.exception("OpenAI error (non-stream)")
-                return None
-        # --- конец вызова OpenAI с retry ---
-
-        text = resp.output_text
-        if text:
-            remember_assistant(conv_key, text)
-        return text
-    
-    except Exception:
-        logging.exception("OpenAI error (non-stream)")
-        return None
-
-
 # === GPT-стрим с троттлингом ===
-async def stream_openai(user_text: str, name: str, conv_key: HistoryKey):
+async def stream_openai(user_text: str, name: str, conv_key: HistoryKey, sys_prompt: str):
     """
     Асинхронный генератор: отдаёт дельты текста (строки) по мере генерации модели.
     Бросает исключение при ошибке (сверху поймаем и упадём на fallback).
@@ -249,7 +243,7 @@ async def stream_openai(user_text: str, name: str, conv_key: HistoryKey):
         try:
             async with openai_client.responses.stream(
                 model="gpt-4o-mini",
-                instructions="Бот, отвечающий на вопросы пользователей о Minecraft сервере MineBridge. Сайт: майнбридж.рф.",
+                instructions=sys_prompt,
                 input=input_with_ctx,
                 temperature=0.5,
             ) as stream:
@@ -349,11 +343,7 @@ async def auto_reply(message: types.Message):
             except Exception:
                 logging.exception("Unexpected error while editing message")
                 return False
-
-    async def safe_edit(text: str):
-        # совместимость со старым кодом
-        return await safe_edit_to(sent_msg, text, markdown=True)
-
+            
     async def safe_send_reply(text: str):
         """Отправить reply с backoff (для частей ответа после edit)."""
         attempt = 0
@@ -387,6 +377,9 @@ async def auto_reply(message: types.Message):
         # Сообщение-заглушка
         sent_msg = await message.reply("⏳ *Печатаю...*")
 
+        # Загрузка системного промта из TSX
+        sys_prompt = load_system_prompt_for_chat(message.chat)
+
         # Параметры троттлинга для стрима
         CHUNK = 4000               # лимит Telegram для Markdown с запасом
         SEND_MIN_CHARS = 100       # минимум новых символов, чтобы делать edit
@@ -404,7 +397,7 @@ async def auto_reply(message: types.Message):
 
             username = (message.from_user.username or f"{message.from_user.first_name}")
 
-            async for delta in stream_openai(message.text, username, make_key(message)):
+            async for delta in stream_openai(message.text, username, make_key(message), sys_prompt):
                 if not delta:
                     continue
                 current_chunk_text += delta
@@ -446,45 +439,18 @@ async def auto_reply(message: types.Message):
             if current_chunk_text:
                 await safe_edit_to(active_msg, current_chunk_text, markdown=True)
             else:
-                await safe_edit("Не удалось получить ответ — попробуйте позже.")
+                await safe_send_reply("*Не удалось получить ответ — попробуйте позже*")
                 return
 
         except Exception:
-            logging.exception("Streaming failed; falling back to non-stream response")
-            # Fallback: однократный запрос
-            # username = (message.from_user.username or f"{message.from_user.first_name}")
-            # resp = await ask_openai(message.text, username, make_key(message))
-
-            # if resp is None:
-            #     await safe_edit("Не удалось получить ответ — попробуйте позже.")
-            #     return
-
-            # resp_text = str(resp).strip()
-            # if not resp_text:
-            #     await safe_edit("Не удалось получить ответ — попробуйте позже.")
-            #     return
-
-            # # Telegram limit — используем 4000 символов для безопасности
-            # CHUNK = 4000
-            # if len(resp_text) <= CHUNK:
-            #     await safe_edit(resp_text)
-            # else:
-            #     first = resp_text[:CHUNK]
-            #     ok = await safe_edit(first)
-            #     if ok:
-            #         rest = resp_text[CHUNK:]
-            #         # отправляем оставшееся как дополнительные сообщения по частям
-            #         for i in range(0, len(rest), CHUNK):
-            #             part = rest[i:i + CHUNK]
-            #             new_msg = await safe_send_reply(part)
-            #             if new_msg is None:
-            #                 logging.error("Failed to send continuation part starting at %d", CHUNK + i)
-            #                 break
+            logging.exception("Streaming failed")
+            await safe_edit_to(active_msg, "*Что-то пошло не так* ⚠️", markdown=True)
+            return
 
     except Exception:
-        logging.exception("Ошибка в auto_reply (stream loop)")
+        logging.exception("Ошибка в auto_reply")
         try:
-            await sent_msg.edit_text("Произошла внутренняя ошибка — попробуйте позже.", parse_mode=ParseMode.MARKDOWN)
+            await safe_edit_to(active_msg, "*Что-то пошло не так* ⚠️", markdown=True)
         except Exception:
             pass
 
