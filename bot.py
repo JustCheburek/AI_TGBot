@@ -362,11 +362,10 @@ async def rag_search(query: str, k: int = RAG_TOP_K) -> list[tuple[dict, float]]
     return [(RAG_CHUNKS[i], float(sims[i])) for i in top_idx]
 
 async def rag_build_context(user_query: str, k: int = RAG_TOP_K, max_chars: int = 2000) -> str:
-    """Формирует текстовый блок с контекстом и цитатами [id]."""
     results = await rag_search(user_query, k=k)
     if not results:
         return ""
-    lines = ["Ниже выдержки из базы знаний (используй их как источники и цитируй [id]):"]
+    lines = ["Ниже выдержки из базы знаний. Используй их только как справку и не включай служебные индексы/ссылки в ответ."]
     total = 0
     for ch, sc in results:
         snippet = ch["text"].strip()
@@ -374,7 +373,7 @@ async def rag_build_context(user_query: str, k: int = RAG_TOP_K, max_chars: int 
             continue
         if total + len(snippet) > max_chars:
             snippet = snippet[:max(0, max_chars - total)]
-        lines.append(f"[{ch['id']}] {snippet}")
+        lines.append(snippet)   # <-- БЕЗ [id]
         total += len(snippet)
         if total >= max_chars:
             break
@@ -635,6 +634,7 @@ async def auto_reply(message: types.Message):
 
         # Загрузка системного промта из TSX
         sys_prompt = load_system_prompt_for_chat(message.chat)
+        sys_prompt += "\n\nВАЖНО: В ответе не показывай служебные индексы источников (вида [xxxxxxxxxx:0] или 0d829391f3:0)."
 
         # RAG: подготовим контекст из kb
         rag_ctx = ""
