@@ -5,6 +5,10 @@ import asyncio
 from dotenv import load_dotenv
 import re
 from pathlib import Path
+import json
+import hashlib
+import numpy as np
+from typing import List
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -39,19 +43,36 @@ bot = Bot(
     default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)  # <— Markdown включён
 )
 dp = Dispatcher()
-openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY, base_url="https://openrouter.ai/api/v1")
 
 # глобальная переменная для хранения username бота (без @)
 bot_username = "minebridge52bot"
 
 # === Контекст N сообщений ===
-MAX_HISTORY_MESSAGES = 8  # храним всего N последних сообщений (user/assistant вперемешку)
+MAX_HISTORY_MESSAGES = 3  # храним всего N последних сообщений (user/assistant вперемешку)
 HistoryKey = Tuple[int, int]  # (chat_id, user_id)
 HISTORY: Dict[HistoryKey, Deque[Tuple[str, str]]] = defaultdict(lambda: deque(maxlen=MAX_HISTORY_MESSAGES))
 
 # retry params for OpenAI rate limits
 MAX_OPENAI_RETRIES = 2
 OPENAI_BACKOFF_BASE = 1.5  # seconds, will use exponential backoff capped below
+
+# === RAG: директория базы знаний и кэш ===
+KB_DIR = Path(__file__).resolve().parent / "kb"          # положите сюда .txt/.md файлы
+RAG_INDEX_DIR = Path(__file__).resolve().parent / ".rag_cache"
+RAG_ENABLED = True
+
+RAG_CHUNK_SIZE = 900
+RAG_CHUNK_OVERLAP = 150
+RAG_TOP_K = 6
+RAG_EMB_MODEL = "text-embedding-3-large"
+RAG_EMB_BATCH = 64
+
+# Глобальные структуры индекса
+RAG_CHUNKS: List[dict] = []   # [{id, file, text, mtime}]
+RAG_VECS: np.ndarray | None = None
+RAG_LOADED = False
+RAG_LOCK = asyncio.Lock()
 
 async def _extract_retry_after_seconds(err) -> float | None:
     """Попытаться извлечь время ожидания из ошибки OpenAI (headers/атрибуты/текст)."""
@@ -126,11 +147,18 @@ async def on_startup():
     global bot_username
     try:
         me = await bot.get_me()
-        # сохраняем имя без '@' в нижнем регистре
         bot_username = (me.username or "").lower()
         logging.info(f"Bot username: @{bot_username}")
     except Exception:
         logging.exception("Failed to get bot username on startup")
+
+    # RAG: ленивая сборка индекса (если KB пуста — просто пропустится)
+    try:
+        if RAG_ENABLED:
+            await _ensure_rag_index()
+    except Exception:
+        logging.exception("RAG: failed to ensure index on startup")
+
 
 # === Загрузка системного промта из .txt ===
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
@@ -178,6 +206,164 @@ def load_system_prompt_for_chat(chat: types.Chat) -> str:
     return "Пиши что я сегодня не смогу помочь, мой системный промт сломался."
 
 
+def _hash(s: str) -> str:
+    return hashlib.sha1(s.encode("utf-8")).hexdigest()[:10]
+
+def _read_text_file(p: Path) -> str:
+    try:
+        raw = p.read_text(encoding="utf-8", errors="ignore")
+        if raw.startswith("\ufeff"):
+            raw = raw.lstrip("\ufeff")
+        return raw.replace("\r\n", "\n").replace("\r", "\n")
+    except Exception:
+        logging.exception("RAG: failed to read %s", p)
+        return ""
+
+def _split_chunks(text: str, size: int = RAG_CHUNK_SIZE, ov: int = RAG_CHUNK_OVERLAP) -> list[str]:
+    text = text.strip()
+    if not text:
+        return []
+    out, i = [], 0
+    while i < len(text):
+        out.append(text[i:i+size])
+        i += max(1, size - ov)
+    return [c for c in out if c.strip()]
+
+async def _embed_batch(texts: list[str]) -> list[list[float]]:
+    """Эмбеддинги с простым retry на rate-limit."""
+    attempt = 0
+    while True:
+        try:
+            resp = await openai_client.embeddings.create(model=RAG_EMB_MODEL, input=texts)
+            return [d.embedding for d in resp.data]
+        except (RateLimitError, APIError) as e:
+            attempt += 1
+            if attempt > MAX_OPENAI_RETRIES:
+                logging.exception("RAG: embeddings max retries reached")
+                raise
+            wait = await _extract_retry_after_seconds(e) or min(OPENAI_BACKOFF_BASE * (2 ** (attempt - 1)), 60)
+            logging.warning("RAG: embedding rate-limit/API error, retry %d/%d after %.1fs: %s",
+                            attempt, MAX_OPENAI_RETRIES, wait, e)
+            await asyncio.sleep(wait)
+
+async def _ensure_rag_index():
+    """Ленивая сборка/обновление индекса RAG. Вызывается на старте и по /rag_reindex."""
+    global RAG_CHUNKS, RAG_VECS, RAG_LOADED
+    async with RAG_LOCK:
+        RAG_INDEX_DIR.mkdir(parents=True, exist_ok=True)
+        meta_path = RAG_INDEX_DIR / "chunks.json"
+        vecs_path = RAG_INDEX_DIR / "vecs.npy"
+
+        # Загрузим, если есть
+        if meta_path.exists() and vecs_path.exists() and not RAG_LOADED:
+            try:
+                RAG_CHUNKS = json.loads(meta_path.read_text(encoding="utf-8"))
+                RAG_VECS = np.load(vecs_path)
+                RAG_LOADED = True
+                logging.info("RAG: loaded cache with %d chunks", len(RAG_CHUNKS))
+            except Exception:
+                logging.exception("RAG: failed to load cache, rebuilding")
+
+        # Соберём список актуальных файлов
+        kb_files: list[Path] = []
+        if KB_DIR.exists():
+            for p in KB_DIR.rglob("*"):
+                if p.is_file() and p.suffix.lower() in {".txt", ".md"}:
+                    kb_files.append(p)
+
+        # Построим карту mtime, чтобы понять, что пересчитывать
+        known = {(c["file"], c.get("mtime", 0.0)): True for c in RAG_CHUNKS}
+        need_rebuild = False
+
+        # Если индекс пуст или файлов стало больше/изменились — перестроим
+        existing_paths = {c["file"] for c in RAG_CHUNKS}
+        kb_paths = {str(p) for p in kb_files}
+
+        if not RAG_LOADED or existing_paths != kb_paths:
+            need_rebuild = True
+        else:
+            # Сравним mtime
+            for p in kb_files:
+                m = p.stat().st_mtime
+                if not any(c["file"] == str(p) and abs(c.get("mtime", 0.0) - m) < 1e-6 for c in RAG_CHUNKS):
+                    need_rebuild = True
+                    break
+
+        if not need_rebuild:
+            return  # кэш валиден
+
+        logging.info("RAG: (re)building index...")
+        all_chunks: list[dict] = []
+        all_texts: list[str] = []
+
+        for p in kb_files:
+            txt = _read_text_file(p)
+            parts = _split_chunks(txt)
+            m = p.stat().st_mtime
+            for i, ch in enumerate(parts):
+                cid = f"{_hash(str(p))}:{i}"
+                all_chunks.append({"id": cid, "file": str(p), "text": ch, "mtime": m})
+                all_texts.append(ch)
+
+        # Эмбеддим батчами
+        vecs: list[list[float]] = []
+        for i in range(0, len(all_texts), RAG_EMB_BATCH):
+            batch = all_texts[i:i+RAG_EMB_BATCH]
+            vecs.extend(await _embed_batch(batch))
+
+        if vecs:
+            V = np.array(vecs, dtype="float32")
+            # нормируем для косинуса
+            norms = np.linalg.norm(V, axis=1, keepdims=True)
+            norms[norms == 0.0] = 1.0
+            V /= norms
+            RAG_CHUNKS = all_chunks
+            RAG_VECS = V
+            meta_path.write_text(json.dumps(RAG_CHUNKS, ensure_ascii=False, indent=2), encoding="utf-8")
+            np.save(vecs_path, RAG_VECS)
+            RAG_LOADED = True
+            logging.info("RAG: built %d chunks from %d files", len(RAG_CHUNKS), len(kb_files))
+        else:
+            RAG_CHUNKS, RAG_VECS, RAG_LOADED = [], None, True
+            logging.warning("RAG: no chunks produced (empty kb?)")
+
+async def rag_search(query: str, k: int = RAG_TOP_K) -> list[tuple[dict, float]]:
+    """Возвращает топ-k [(chunk, score)] по косинусному сходству."""
+    if not RAG_ENABLED:
+        return []
+    await _ensure_rag_index()
+    if RAG_VECS is None or len(RAG_CHUNKS) == 0:
+        return []
+    # эмбед запроса
+    q_emb = (await openai_client.embeddings.create(model=RAG_EMB_MODEL, input=[query])).data[0].embedding
+    q = np.array([q_emb], dtype="float32")
+    q /= max(np.linalg.norm(q), 1e-12)
+    # скорим
+    sims = (RAG_VECS @ q.T).reshape(-1)
+    top_idx = np.argsort(-sims)[:k]
+    return [(RAG_CHUNKS[i], float(sims[i])) for i in top_idx]
+
+async def rag_build_context(user_query: str, k: int = RAG_TOP_K, max_chars: int = 2000) -> str:
+    """Формирует текстовый блок с контекстом и цитатами [id]."""
+    results = await rag_search(user_query, k=k)
+    if not results:
+        return ""
+    lines = ["Ниже выдержки из базы знаний (используй их как источники и цитируй [id]):"]
+    total = 0
+    for ch, sc in results:
+        snippet = ch["text"].strip()
+        if not snippet:
+            continue
+        if total + len(snippet) > max_chars:
+            snippet = snippet[:max(0, max_chars - total)]
+        lines.append(f"[{ch['id']}] {snippet}")
+        total += len(snippet)
+        if total >= max_chars:
+            break
+    lines.append("— Конец выдержек —")
+    return "\n".join(lines)
+
+
 # === Подписка ===
 async def is_subscribed(user_id: int) -> bool:
     try:
@@ -205,6 +391,22 @@ async def cmd_start(message: types.Message):
         reply_markup=kb
     )
 
+@dp.message(Command("rag_reindex"))
+async def cmd_rag_reindex(message: types.Message):
+    if not RAG_ENABLED:
+        await message.reply("RAG отключён.")
+        return
+    await message.reply("🔄 Перестраиваю индекс...")
+    try:
+        # Принудительная перестройка: чистим флаг загрузки и вызываем ensure
+        global RAG_LOADED
+        RAG_LOADED = False
+        await _ensure_rag_index()
+        await message.reply(f"✅ Готово. Чанков: {len(RAG_CHUNKS)}")
+    except Exception as e:
+        logging.exception("RAG reindex error")
+        await message.reply(f"⚠️ Ошибка перестройки: {e}")
+
 
 @dp.callback_query()
 async def callback_any(query: types.CallbackQuery):
@@ -219,7 +421,7 @@ async def callback_any(query: types.CallbackQuery):
 
 
 # === GPT-стрим с троттлингом ===
-async def stream_openai(user_text: str, name: str, conv_key: HistoryKey, sys_prompt: str):
+async def stream_openai(user_text: str, name: str, conv_key: HistoryKey, sys_prompt: str, rag_ctx: str | None = None):
     """
     Асинхронный генератор: отдаёт дельты текста (строки) по мере генерации модели.
     Бросает исключение при ошибке (сверху поймаем и упадём на fallback).
@@ -232,6 +434,10 @@ async def stream_openai(user_text: str, name: str, conv_key: HistoryKey, sys_pro
     input_with_ctx = build_input_with_history(conv_key, prompt, name)
     remember_user(conv_key, prompt)
 
+    # Вставляем RAG-контекст (если есть) перед историей
+    if rag_ctx:
+        input_with_ctx = f"{rag_ctx}\n\n{input_with_ctx}"
+
     logging.info(
         "Calling OpenAI (stream) for user '%s' prompt='%s'",
         name, (prompt[:80] + '...') if len(prompt) > 80 else prompt
@@ -242,7 +448,7 @@ async def stream_openai(user_text: str, name: str, conv_key: HistoryKey, sys_pro
     while True:
         try:
             async with openai_client.responses.stream(
-                model="gpt-4o-mini",
+                model="x-ai/grok-4-fast:free",
                 instructions=sys_prompt,
                 input=input_with_ctx,
                 temperature=0.5,
@@ -299,16 +505,16 @@ async def auto_reply(message: types.Message):
 
     user_id = message.from_user.id
 
-    if not await is_subscribed(user_id):
-        await message.answer("Подпишитесь на @MineBridgeOfficial, чтобы пользоваться ботом.")
-        return
-
     # === ВАЖНО: требуем упоминание только в группах/супергруппах ===
     is_group = message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
     if is_group and not is_mentioned_or_reply(message):
         logging.info("Пропущено сообщение без упоминания бота или ответа на бота (группа).")
         return
     # В личке (private) — всегда отвечаем
+
+    if not await is_subscribed(user_id):
+        await message.reply("Подпишитесь на @MineBridgeOfficial, чтобы пользоваться ботом.")
+        return
 
     # --- вспомогательные функции с backoff/троттлингом ---
     max_attempts = 4
@@ -380,6 +586,14 @@ async def auto_reply(message: types.Message):
         # Загрузка системного промта из TSX
         sys_prompt = load_system_prompt_for_chat(message.chat)
 
+        # RAG: подготовим контекст из kb
+        rag_ctx = ""
+        try:
+            if RAG_ENABLED:
+                rag_ctx = await rag_build_context(message.text, k=RAG_TOP_K, max_chars=2000)
+        except Exception:
+            logging.exception("RAG: failed to build context")
+
         # Параметры троттлинга для стрима
         CHUNK = 4000               # лимит Telegram для Markdown с запасом
         SEND_MIN_CHARS = 100       # минимум новых символов, чтобы делать edit
@@ -397,7 +611,7 @@ async def auto_reply(message: types.Message):
 
             username = (message.from_user.username or f"{message.from_user.first_name}")
 
-            async for delta in stream_openai(message.text, username, make_key(message), sys_prompt):
+            async for delta in stream_openai(message.text, username, make_key(message), sys_prompt, rag_ctx=rag_ctx):
                 if not delta:
                     continue
                 current_chunk_text += delta
@@ -442,15 +656,15 @@ async def auto_reply(message: types.Message):
                 await safe_send_reply("*Не удалось получить ответ — попробуйте позже*")
                 return
 
-        except Exception:
+        except Exception as e:
             logging.exception("Streaming failed")
-            await safe_edit_to(active_msg, "*Что-то пошло не так* ⚠️", markdown=True)
+            await safe_edit_to(active_msg, f"*Что-то пошло не так* ⚠️\n{e.message}", markdown=True)
             return
 
-    except Exception:
+    except Exception as e:
         logging.exception("Ошибка в auto_reply")
         try:
-            await safe_edit_to(active_msg, "*Что-то пошло не так* ⚠️", markdown=True)
+            await safe_edit_to(active_msg, f"*Что-то пошло не так* ⚠️\n{e.message}", markdown=True)
         except Exception:
             pass
 
