@@ -9,6 +9,7 @@ import json
 import hashlib
 import numpy as np
 from typing import List
+import httpx
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -65,7 +66,7 @@ RAG_ENABLED = True
 RAG_CHUNK_SIZE = 900
 RAG_CHUNK_OVERLAP = 150
 RAG_TOP_K = 6
-RAG_EMB_MODEL = "text-embedding-3-large"
+RAG_EMB_MODEL = "jina-embeddings-v3"
 RAG_EMB_BATCH = 64
 
 # Глобальные структуры индекса
@@ -230,21 +231,41 @@ def _split_chunks(text: str, size: int = RAG_CHUNK_SIZE, ov: int = RAG_CHUNK_OVE
     return [c for c in out if c.strip()]
 
 async def _embed_batch(texts: list[str]) -> list[list[float]]:
-    """Эмбеддинги с простым retry на rate-limit."""
+    """
+    Эмбеддинги через Jina API (стабильно и быстро).
+    """
+    JINA_KEY = os.environ.get("JINA_API_KEY")
+    if not JINA_KEY:
+        raise RuntimeError("JINA_API_KEY is not set in environment")
+
     attempt = 0
     while True:
         try:
-            resp = await openai_client.embeddings.create(model=RAG_EMB_MODEL, input=texts)
-            return [d.embedding for d in resp.data]
-        except (RateLimitError, APIError) as e:
+            async with httpx.AsyncClient(timeout=60) as s:
+                r = await s.post(
+                    "https://api.jina.ai/v1/embeddings",
+                    headers={
+                        "Authorization": f"Bearer {JINA_KEY}",
+                        "Accept": "application/json",
+                    },
+                    json={"model": RAG_EMB_MODEL, "input": texts},
+                )
+                r.raise_for_status()
+                payload = r.json()
+                return [item["embedding"] for item in payload["data"]]
+        except httpx.HTTPStatusError as e:
             attempt += 1
             if attempt > MAX_OPENAI_RETRIES:
-                logging.exception("RAG: embeddings max retries reached")
+                body = (e.response.text or "")[:500]
+                logging.exception("RAG: Jina HTTP %s, body: %s", e.response.status_code, body)
                 raise
-            wait = await _extract_retry_after_seconds(e) or min(OPENAI_BACKOFF_BASE * (2 ** (attempt - 1)), 60)
-            logging.warning("RAG: embedding rate-limit/API error, retry %d/%d after %.1fs: %s",
-                            attempt, MAX_OPENAI_RETRIES, wait, e)
+            wait = min(OPENAI_BACKOFF_BASE * (2 ** (attempt - 1)), 60)
+            logging.warning("RAG: Jina HTTP %s, retry %d/%d after %.1fs",
+                            e.response.status_code, attempt, MAX_OPENAI_RETRIES, wait)
             await asyncio.sleep(wait)
+        except Exception:
+            logging.exception("RAG: Jina embeddings request failed")
+            raise
 
 async def _ensure_rag_index():
     """Ленивая сборка/обновление индекса RAG. Вызывается на старте и по /rag_reindex."""
@@ -328,17 +349,14 @@ async def _ensure_rag_index():
             logging.warning("RAG: no chunks produced (empty kb?)")
 
 async def rag_search(query: str, k: int = RAG_TOP_K) -> list[tuple[dict, float]]:
-    """Возвращает топ-k [(chunk, score)] по косинусному сходству."""
     if not RAG_ENABLED:
         return []
     await _ensure_rag_index()
     if RAG_VECS is None or len(RAG_CHUNKS) == 0:
         return []
-    # эмбед запроса
-    q_emb = (await openai_client.embeddings.create(model=RAG_EMB_MODEL, input=[query])).data[0].embedding
+    q_emb = (await _embed_batch([query]))[0]
     q = np.array([q_emb], dtype="float32")
     q /= max(np.linalg.norm(q), 1e-12)
-    # скорим
     sims = (RAG_VECS @ q.T).reshape(-1)
     top_idx = np.argsort(-sims)[:k]
     return [(RAG_CHUNKS[i], float(sims[i])) for i in top_idx]
@@ -420,6 +438,31 @@ async def callback_any(query: types.CallbackQuery):
         await query.answer("Подписка не найдена. Убедитесь, что подписаны на канал.", show_alert=True)
 
 
+async def complete_openai_nostream(user_text: str, name: str, conv_key: HistoryKey, sys_prompt: str, rag_ctx: str | None = None) -> str:
+    """Одноразовый запрос без стрима через chat.completions."""
+    prompt = (user_text or "").strip()
+    if not prompt:
+        return ""
+    prompt = _shorten(prompt)
+    input_with_ctx = build_input_with_history(conv_key, prompt, name)
+    # ВНИМАНИЕ: здесь НЕ зовём remember_user — он уже был внутри stream_openai
+    if rag_ctx:
+        input_with_ctx = f"{rag_ctx}\n\n{input_with_ctx}"
+
+    resp = await openai_client.chat.completions.create(
+        model="x-ai/grok-4-fast:free",
+        messages=[
+            {"role": "system", "content": sys_prompt},
+            {"role": "user", "content": input_with_ctx},
+        ],
+        temperature=0.5,
+    )
+    text = (resp.choices[0].message.content or "").strip()
+    if text:
+        remember_assistant(conv_key, text)
+    return text
+
+
 # === GPT-стрим с троттлингом ===
 async def stream_openai(user_text: str, name: str, conv_key: HistoryKey, sys_prompt: str, rag_ctx: str | None = None):
     """
@@ -462,8 +505,14 @@ async def stream_openai(user_text: str, name: str, conv_key: HistoryKey, sys_pro
                     elif event.type == "response.error":
                         raise RuntimeError(getattr(event, "error", "OpenAI streaming error"))
                 # Финальный ответ
-                final_resp = await stream.get_final_response()
-                final_text = "".join(full_text_parts) if full_text_parts else getattr(final_resp, "output_text", "") or ""
+                try:
+                    final_resp = await stream.get_final_response()
+                    final_text = "".join(full_text_parts) if full_text_parts else getattr(final_resp, "output_text", "") or ""
+                except Exception as _e:
+                    # Нет response.completed — берём то, что успели накопить
+                    logging.warning("No response.completed event, using buffered text: %s", _e)
+                    final_text = "".join(full_text_parts)
+
                 if final_text.strip():
                     remember_assistant(conv_key, final_text)
             break  # успешный стрим — выходим из retry-цикла
@@ -513,6 +562,7 @@ async def auto_reply(message: types.Message):
     # В личке (private) — всегда отвечаем
 
     if not await is_subscribed(user_id):
+        print(f"Пользователь {user_id} не подписан")
         await message.reply("Подпишитесь на @MineBridgeOfficial, чтобы пользоваться ботом.")
         return
 
@@ -653,18 +703,28 @@ async def auto_reply(message: types.Message):
             if current_chunk_text:
                 await safe_edit_to(active_msg, current_chunk_text, markdown=True)
             else:
-                await safe_send_reply("*Не удалось получить ответ — попробуйте позже*")
-                return
+                fallback = await complete_openai_nostream(
+                    message.text,
+                    (message.from_user.username or f"{message.from_user.first_name}"),
+                    make_key(message),
+                    sys_prompt,
+                    rag_ctx=rag_ctx,
+                )
+                if fallback:
+                    await safe_edit_to(active_msg, fallback, markdown=True)
+                else:
+                    await safe_edit_to(active_msg, "*Не удалось получить ответ — попробуйте позже*", markdown=True)
+                    return
 
         except Exception as e:
             logging.exception("Streaming failed")
-            await safe_edit_to(active_msg, f"*Что-то пошло не так* ⚠️\n{e.message}", markdown=True)
+            await safe_edit_to(active_msg, f"*Что-то пошло не так* ⚠️\n{str(e)}", markdown=True)
             return
 
     except Exception as e:
         logging.exception("Ошибка в auto_reply")
         try:
-            await safe_edit_to(active_msg, f"*Что-то пошло не так* ⚠️\n{e.message}", markdown=True)
+            await safe_edit_to(active_msg, f"*Что-то пошло не так* ⚠️\n{str(e)}", markdown=True)
         except Exception:
             pass
 
