@@ -413,16 +413,16 @@ async def cmd_rag_reindex(message: types.Message):
     if not RAG_ENABLED:
         await message.reply("RAG отключён.")
         return
-    await message.reply("🔄 Перестраиваю индекс...")
+    sent_msg = await message.reply("🔄 Перестраиваю индекс...")
     try:
         # Принудительная перестройка: чистим флаг загрузки и вызываем ensure
         global RAG_LOADED
         RAG_LOADED = False
         await _ensure_rag_index()
-        await message.reply(f"✅ Готово. Чанков: {len(RAG_CHUNKS)}")
+        await safe_edit_to(sent_msg, f"✅ Готово. Чанков: {len(RAG_CHUNKS)}")
     except Exception as e:
         logging.exception("RAG reindex error")
-        await message.reply(f"⚠️ Ошибка перестройки: {e}")
+        await safe_edit_to(sent_msg, f"⚠️ Ошибка перестройки: {e}")
 
 
 @dp.callback_query()
@@ -437,95 +437,125 @@ async def callback_any(query: types.CallbackQuery):
         await query.answer("Подписка не найдена. Убедитесь, что подписаны на канал.", show_alert=True)
 
 
+# === Нормальный (НЕ стримовый) вызов модели с ретраями на rate-limit ===
 async def complete_openai_nostream(user_text: str, name: str, conv_key: HistoryKey, sys_prompt: str, rag_ctx: str | None = None) -> str:
-    """Одноразовый запрос без стрима через chat.completions."""
+    """
+    Одноразовый запрос без стрима через chat.completions с бэкоффом и сохранением истории.
+    """
     prompt = (user_text or "").strip()
     if not prompt:
         return ""
     prompt = _shorten(prompt)
-    input_with_ctx = build_input_with_history(conv_key, prompt, name)
-    # ВНИМАНИЕ: здесь НЕ зовём remember_user — он уже был внутри stream_openai
-    if rag_ctx:
-        input_with_ctx = f"{rag_ctx}\n\n{input_with_ctx}"
 
-    resp = await openai_client.chat.completions.create(
-        model="x-ai/grok-4-fast:free",
-        messages=[
-            {"role": "system", "content": sys_prompt},
-            {"role": "user", "content": input_with_ctx},
-        ],
-        temperature=0.5,
-    )
-    text = (resp.choices[0].message.content or "").strip()
-    if text:
-        remember_assistant(conv_key, text)
-    return text
-
-
-# === GPT-стрим с троттлингом ===
-async def stream_openai(user_text: str, name: str, conv_key: HistoryKey, sys_prompt: str, rag_ctx: str | None = None):
-    """
-    Асинхронный генератор: отдаёт дельты текста (строки) по мере генерации модели.
-    Бросает исключение при ошибке (сверху поймаем и упадём на fallback).
-    """
-    prompt = (user_text or "").strip()
-    if not prompt:
-        return
-
-    prompt = _shorten(prompt)
-    input_with_ctx = build_input_with_history(conv_key, prompt, name)
+    # Запомнить реплику пользователя
     remember_user(conv_key, prompt)
 
-    # Вставляем RAG-контекст (если есть) перед историей
+    input_with_ctx = build_input_with_history(conv_key, prompt, name)
     if rag_ctx:
         input_with_ctx = f"{rag_ctx}\n\n{input_with_ctx}"
 
-    logging.info(
-        "Calling OpenAI (stream) for user '%s' prompt='%s'",
-        name, (prompt[:80] + '...') if len(prompt) > 80 else prompt
-    )
-
-    # официальный стрим SDK с retry на rate-limit
     attempt = 0
     while True:
         try:
-            async with openai_client.responses.stream(
+            resp = await openai_client.chat.completions.create(
                 model="x-ai/grok-4-fast:free",
-                instructions=sys_prompt,
-                input=input_with_ctx,
+                messages=[
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": input_with_ctx},
+                ],
                 temperature=0.5,
-            ) as stream:
-                full_text_parts: list[str] = []
-                async for event in stream:
-                    if event.type == "response.output_text.delta":
-                        delta = event.delta or ""
-                        full_text_parts.append(delta)
-                        yield delta
-                    elif event.type == "response.error":
-                        raise RuntimeError(getattr(event, "error", "OpenAI streaming error"))
-                # Финальный ответ
-                try:
-                    final_resp = await stream.get_final_response()
-                    final_text = "".join(full_text_parts) if full_text_parts else getattr(final_resp, "output_text", "") or ""
-                except Exception as _e:
-                    # Нет response.completed — берём то, что успели накопить
-                    logging.warning("No response.completed event, using buffered text: %s", _e)
-                    final_text = "".join(full_text_parts)
-
-                if final_text.strip():
-                    remember_assistant(conv_key, final_text)
-            break  # успешный стрим — выходим из retry-цикла
+            )
+            text = (resp.choices[0].message.content or "").strip()
+            if text:
+                remember_assistant(conv_key, text)
+            return text
         except (RateLimitError, APIError) as e:
             attempt += 1
             if attempt > MAX_OPENAI_RETRIES:
-                logging.exception("OpenAI streaming rate limit: max retries reached")
+                logging.exception("OpenAI non-stream rate limit: max retries reached")
                 raise
             wait = await _extract_retry_after_seconds(e) or min(OPENAI_BACKOFF_BASE * (2 ** (attempt - 1)), 60)
-            logging.warning("OpenAI streaming rate-limit/API error, retry %d/%d after %.1fs: %s", attempt, MAX_OPENAI_RETRIES, wait, e)
+            logging.warning("OpenAI non-stream rate-limit/API error, retry %d/%d after %.1fs: %s",
+                            attempt, MAX_OPENAI_RETRIES, wait, e)
             await asyncio.sleep(wait)
 
 
-# === Проверка упоминания бота или ответа ===
+# === Вспомогательные функции отправки/редактирования ===
+async def safe_edit_to(msg: types.Message, text: str, markdown: bool = True) -> bool:
+    """Безопасный edit_text с backoff; при проблемах парсинга — пробуем без Markdown."""
+    max_attempts = 4
+    attempt = 0
+    backoff = 1.0
+    while True:
+        try:
+            await msg.edit_text(text, parse_mode=(ParseMode.MARKDOWN if markdown else None))
+            return True
+        except TelegramRetryAfter as e:
+            attempt += 1
+            wait = getattr(e, "retry_after", backoff)
+            logging.warning("TelegramRetryAfter on edit: waiting %s seconds (attempt %d)", wait, attempt)
+            await asyncio.sleep(wait)
+            backoff *= 2
+            if attempt >= max_attempts:
+                logging.error("Max attempts reached for edit; aborting edit.")
+                return False
+        except TelegramBadRequest as e:
+            if markdown and "can't parse entities" in str(e).lower():
+                markdown = False
+                continue
+            logging.exception("Telegram edit error (bad request): %s", e)
+            return False
+        except TelegramForbiddenError as e:
+            logging.exception("Telegram edit forbidden: %s", e)
+            return False
+        except Exception:
+            logging.exception("Unexpected error while editing message")
+            return False
+
+async def safe_send_reply(base_message: types.Message, text: str):
+    """Отправить reply с backoff (для продолжений)."""
+    max_attempts = 4
+    attempt = 0
+    backoff = 1.0
+    while True:
+        try:
+            return await base_message.reply(text, parse_mode=ParseMode.MARKDOWN)
+        except TelegramRetryAfter as e:
+            attempt += 1
+            wait = getattr(e, "retry_after", backoff)
+            logging.warning("TelegramRetryAfter on send: waiting %s seconds (attempt %d)", wait, attempt)
+            await asyncio.sleep(wait)
+            backoff *= 2
+            if attempt >= max_attempts:
+                logging.error("Max attempts reached for send; aborting send.")
+                return None
+        except (TelegramForbiddenError, TelegramBadRequest) as e:
+            logging.exception("Telegram send error: %s", e)
+            return None
+        except Exception:
+            logging.exception("Unexpected error while sending message")
+            return None
+
+async def send_long_text(initial_msg: types.Message, base_message: types.Message, text: str):
+    """
+    Отправляет длинный ответ: первый кусок — через edit, остальные — отдельными сообщениями.
+    """
+    CHUNK = 4000  # с запасом под Markdown
+    if not text:
+        await safe_edit_to(initial_msg, "*Не удалось получить ответ — попробуйте позже*")
+        return
+
+    parts = [text[i:i+CHUNK] for i in range(0, len(text), CHUNK)] or ["..."]
+
+    # Первый кусок — заменяем "печатаю..."
+    await safe_edit_to(initial_msg, parts[0])
+
+    # Остальные — отдельными сообщениями-реплаями
+    for part in parts[1:]:
+        await safe_send_reply(base_message, part)
+
+
+# === Обработчик сообщений: обычный ответ без стрима ===
 def is_mentioned_or_reply(message: types.Message) -> bool:
     if message.reply_to_message and message.reply_to_message.from_user.is_bot:
         return True
@@ -560,67 +590,10 @@ async def auto_reply(message: types.Message):
         return
     # В личке (private) — всегда отвечаем
 
-    if not await is_subscribed(user_id):
+    if not await is_subscribed(user_id) and user_id != 1087968824:
         print(f"Пользователь {user_id} не подписан")
         await message.reply("Подпишитесь на @MineBridgeOfficial, чтобы пользоваться ботом.")
         return
-
-    # --- вспомогательные функции с backoff/троттлингом ---
-    max_attempts = 4
-
-    async def safe_edit_to(msg: types.Message, text: str, markdown: bool = True) -> bool:
-        """Безопасный edit_text с backoff; при проблемах парсинга — пробуем без Markdown."""
-        attempt = 0
-        backoff = 1.0
-        while True:
-            try:
-                await msg.edit_text(text, parse_mode=(ParseMode.MARKDOWN if markdown else None))
-                return True
-            except TelegramRetryAfter as e:
-                attempt += 1
-                wait = getattr(e, "retry_after", backoff)
-                logging.warning("TelegramRetryAfter on edit: waiting %s seconds (attempt %d)", wait, attempt)
-                await asyncio.sleep(wait)
-                backoff *= 2
-                if attempt >= max_attempts:
-                    logging.error("Max attempts reached for edit; aborting edit.")
-                    return False
-            except TelegramBadRequest as e:
-                # если Markdown ломается на частичных ответах — пробуем без parse_mode
-                if markdown and "can't parse entities" in str(e).lower():
-                    markdown = False
-                    continue
-                logging.exception("Telegram edit error (bad request): %s", e)
-                return False
-            except TelegramForbiddenError as e:
-                logging.exception("Telegram edit forbidden: %s", e)
-                return False
-            except Exception:
-                logging.exception("Unexpected error while editing message")
-                return False
-            
-    async def safe_send_reply(text: str):
-        """Отправить reply с backoff (для частей ответа после edit)."""
-        attempt = 0
-        backoff = 1.0
-        while True:
-            try:
-                return await message.reply(text, parse_mode=ParseMode.MARKDOWN)
-            except TelegramRetryAfter as e:
-                attempt += 1
-                wait = getattr(e, "retry_after", backoff)
-                logging.warning("TelegramRetryAfter on send: waiting %s seconds (attempt %d)", wait, attempt)
-                await asyncio.sleep(wait)
-                backoff *= 2
-                if attempt >= max_attempts:
-                    logging.error("Max attempts reached for send; aborting send.")
-                    return None
-            except (TelegramForbiddenError, TelegramBadRequest) as e:
-                logging.exception("Telegram send error: %s", e)
-                return None
-            except Exception:
-                logging.exception("Unexpected error while sending message")
-                return None
 
     try:
         # (опционально) показать "печатает..."
@@ -632,7 +605,7 @@ async def auto_reply(message: types.Message):
         # Сообщение-заглушка
         sent_msg = await message.reply("⏳ *Печатаю...*")
 
-        # Загрузка системного промта из TSX
+        # Загрузка системного промта из .txt
         sys_prompt = load_system_prompt_for_chat(message.chat)
         sys_prompt += "\n\nВАЖНО: В ответе не показывай служебные индексы источников (вида [xxxxxxxxxx:0] или 0d829391f3:0)."
 
@@ -644,87 +617,25 @@ async def auto_reply(message: types.Message):
         except Exception:
             logging.exception("RAG: failed to build context")
 
-        # Параметры троттлинга для стрима
-        CHUNK = 4000               # лимит Telegram для Markdown с запасом
-        SEND_MIN_CHARS = 100       # минимум новых символов, чтобы делать edit
-        SEND_MIN_SECONDS = 1.2     # минимум секунд между edit'ами одного сообщения
+        username = (message.from_user.username or f"{message.from_user.first_name}")
+        conv_key = make_key(message)
 
-        # Попробуем стрим
-        try:
-            loop = asyncio.get_running_loop()
-            monotonic = loop.time
+        # Обычный запрос (без стрима) с ретраями по rate-limit
+        answer = await complete_openai_nostream(
+            message.text,
+            username,
+            conv_key,
+            sys_prompt,
+            rag_ctx=rag_ctx,
+        )
 
-            active_msg = sent_msg        # текущее сообщение, которое редактируем
-            current_chunk_text = ""      # текст для текущего сообщения
-            last_sent_len = 0            # сколько уже "зафиксировано" в active_msg
-            last_edit_ts = monotonic()   # когда в последний раз редактировали
-
-            username = (message.from_user.username or f"{message.from_user.first_name}")
-
-            async for delta in stream_openai(message.text, username, make_key(message), sys_prompt, rag_ctx=rag_ctx):
-                if not delta:
-                    continue
-                current_chunk_text += delta
-
-                # если переполнили лимит сообщения — финализируем этот чанк и создаём новый
-                while len(current_chunk_text) > CHUNK:
-                    first_part = current_chunk_text[:CHUNK]
-                    rest = current_chunk_text[CHUNK:]
-
-                    # финализируем текущий active_msg (Markdown может быть валидным уже сейчас)
-                    await safe_edit_to(active_msg, first_part, markdown=True)
-
-                    # создаём новое сообщение сразу с содержимым остатка (чтобы не делать лишний edit)
-                    new_msg = await safe_send_reply(rest if rest.strip() else "...")
-                    if new_msg is None:
-                        # если не удалось отправить продолжение — просто выходим из стрима
-                        raise RuntimeError("Failed to send continuation message")
-
-                    active_msg = new_msg
-                    current_chunk_text = rest
-                    last_sent_len = len(rest)  # уже отправили целиком как новое сообщение
-                    last_edit_ts = monotonic()
-
-                # троттлим частоту edit'ов: по времени И по размеру дельты
-                now = monotonic()
-                need_edit = (
-                    (len(current_chunk_text) - last_sent_len >= SEND_MIN_CHARS) and
-                    (now - last_edit_ts >= SEND_MIN_SECONDS)
-                )
-
-                if need_edit:
-                    # Во время стрима лучше без Markdown, чтобы не падать на незакрытых форматах
-                    ok = await safe_edit_to(active_msg, current_chunk_text, markdown=False)
-                    if ok:
-                        last_sent_len = len(current_chunk_text)
-                        last_edit_ts = now
-
-            # стрим завершился — финальный аккуратный апдейт с Markdown
-            if current_chunk_text:
-                await safe_edit_to(active_msg, current_chunk_text, markdown=True)
-            else:
-                fallback = await complete_openai_nostream(
-                    message.text,
-                    (message.from_user.username or f"{message.from_user.first_name}"),
-                    make_key(message),
-                    sys_prompt,
-                    rag_ctx=rag_ctx,
-                )
-                if fallback:
-                    await safe_edit_to(active_msg, fallback, markdown=True)
-                else:
-                    await safe_edit_to(active_msg, "*Не удалось получить ответ — попробуйте позже*", markdown=True)
-                    return
-
-        except Exception as e:
-            logging.exception("Streaming failed")
-            await safe_edit_to(active_msg, f"*Что-то пошло не так* ⚠️\n{str(e)}", markdown=True)
-            return
+        # Отправляем ответ (возможно длинный)
+        await send_long_text(sent_msg, message, answer)
 
     except Exception as e:
         logging.exception("Ошибка в auto_reply")
         try:
-            await safe_edit_to(active_msg, f"*Что-то пошло не так* ⚠️\n{str(e)}", markdown=True)
+            await safe_edit_to(sent_msg, f"*Что-то пошло не так* ⚠️\n{str(e)}")
         except Exception:
             pass
 
