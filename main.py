@@ -165,6 +165,38 @@ async def on_startup():
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 _PROMPT_CACHE: Dict[str, Tuple[float, str]] = {}
 
+# ==== Minecraft server (fixed) ====
+MC_SERVER_HOST = os.getenv("MC_SERVER_HOST")  # ОБЯЗАТЕЛЬНО: например play.example.org
+MC_SERVER_PORT = int(os.getenv("MC_SERVER_PORT", "25565"))  # опц., по умолчанию 25565
+MC_CACHE_TTL = 20  # сек
+_MC_STATUS_CACHE: Dict[str, Tuple[float, dict]] = {}
+
+if not MC_SERVER_HOST:
+    raise SystemExit("Set MC_SERVER_HOST (and optionally MC_SERVER_PORT) in .env")
+
+STATUS_INTENT_RE = re.compile(
+    r'(?i)\b('
+    r'статус сервера|сервер онлайн|сервер оффлайн|онлайн сервера|'
+    r'сколько игроков|сколько людей на сервере|'
+    r'зайти на сервер|ip сервера|адрес сервера'
+    r')\b'
+)
+
+def _parse_host_port(s: str) -> Tuple[str, int | None]:
+    s = (s or "").strip()
+    if not s:
+        return "", None
+    if ":" in s:
+        host, port = s.rsplit(":", 1)
+        try:
+            return host.strip(), int(port)
+        except ValueError:
+            return host.strip(), None
+    return s, None
+
+def _cache_key(host: str, port: int | None) -> str:
+    return f"{host}:{port or 0}"
+
 def _read_txt_prompt(path: Path) -> str:
     """
     Читает текстовый файл промта как есть (UTF-8), кэширует по mtime.
@@ -395,8 +427,10 @@ async def is_subscribed(user_id: int) -> bool:
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    if await is_subscribed(message.from_user.id):
-        await message.answer("Майнкрафт сервер *временно оффлайн*.")
+    user_id = message.from_user.id
+    name = message.from_user.username
+    if await is_subscribed(user_id):
+        await message.answer(f"Привет, @{name}! Можешь писать мне свои вопросы. Обращайся ко мне - нейробот или бот")
         return
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -407,6 +441,94 @@ async def cmd_start(message: types.Message):
         "Для доступа нужен канал @MineBridgeOfficial — подпишитесь и нажмите «*Проверить подписку*».",
         reply_markup=kb
     )
+
+async def fetch_mc_status(host: str, port: int | None = None) -> dict:
+    """
+    Получить статус сервера Minecraft (Java) через https://api.mcsrvstat.us/3/<host>.
+    Если указан порт, API его учитывает автоматически.
+    Кэшируем на MC_CACHE_TTL секунд.
+    """
+    if not host:
+        raise ValueError("Не указан host сервера")
+
+    key = _cache_key(host, port)
+    now = asyncio.get_event_loop().time()
+    cached = _MC_STATUS_CACHE.get(key)
+    if cached and (now - cached[0] < MC_CACHE_TTL):
+        return cached[1]
+
+    url = f"https://api.mcsrvstat.us/3/{host}"
+    if port and port > 0:
+        url = f"{url}:{port}"
+
+    attempt = 0
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=15) as s:
+                r = await s.get(url)
+                r.raise_for_status()
+                data = r.json()
+                _MC_STATUS_CACHE[key] = (now, data)
+                return data
+        except httpx.HTTPStatusError as e:
+            attempt += 1
+            if attempt > MAX_OPENAI_RETRIES:
+                body = (e.response.text or "")[:300]
+                raise RuntimeError(f"MC API HTTP {e.response.status_code}: {body}")
+            wait = min(OPENAI_BACKOFF_BASE * (2 ** (attempt - 1)), 10)
+            await asyncio.sleep(wait)
+        except Exception as e:
+            # без бесконечных ретраев, чтобы не зависать
+            raise RuntimeError(f"Не удалось получить статус сервера: {e}") from e
+
+
+def format_mc_status_text(host: str, port: int | None, payload: dict) -> str:
+    online = bool(payload.get("online"))
+    version = payload.get("version") or ""
+    players_online = players_max = None
+    if isinstance(payload.get("players"), dict):
+        players_online = payload["players"].get("online")
+        players_max = payload["players"].get("max")
+
+    # показываем ровно тот адрес, который считаем «официальным»
+    addr = f"{host}:{port}" if port else host
+
+    motd = ""
+    try:
+        motd_data = payload.get("motd") or {}
+        motd_clean = motd_data.get("clean")
+        if isinstance(motd_clean, list):
+            motd = "\n".join(motd_clean)
+        elif isinstance(motd_clean, str):
+            motd = motd_clean
+    except Exception:
+        pass
+
+    lines = [f"*Статус сервера:* `{addr}`",
+             f"Состояние: {'🟢 онлайн' if online else '🔴 оффлайн'}"]
+    if version:
+        lines.append(f"Версия: `{version}`")
+    if players_online is not None and players_max is not None:
+        lines.append(f"Игроков: *{players_online}* / *{players_max}*")
+    elif players_online is not None:
+        lines.append(f"Игроков онлайн: *{players_online}*")
+    if motd:
+        safe_motd = re.sub(r'([_*`])', r'\\\1', motd)
+        lines.append(f"MOTD:\n`{safe_motd}`")
+    if not online:
+        lines.append("\n_Если сервер должен быть онлайн — попробуйте позже или обратитесь к администраторам._")
+    return "\n".join(lines)
+
+
+@dp.message(Command("status"))
+async def cmd_status(message: types.Message):
+    sent = await message.reply("🔎 Проверяю статус сервера...")
+    try:
+        payload = await fetch_mc_status(MC_SERVER_HOST, MC_SERVER_PORT)
+        text = format_mc_status_text(MC_SERVER_HOST, MC_SERVER_PORT, payload)
+        await safe_edit_to(sent, text)
+    except Exception as e:
+        await safe_edit_to(sent, f"⚠️ Не удалось получить статус: `{_shorten(str(e), 300)}`")
 
 @dp.message(Command("rag_reindex"))
 async def cmd_rag_reindex(message: types.Message):
@@ -555,25 +677,66 @@ async def send_long_text(initial_msg: types.Message, base_message: types.Message
         await safe_send_reply(base_message, part)
 
 
-# === Обработчик сообщений: обычный ответ без стрима ===
-def is_mentioned_or_reply(message: types.Message) -> bool:
-    if message.reply_to_message and message.reply_to_message.from_user.is_bot:
+def should_answer(message: types.Message) -> bool:
+    """
+    Возвращаем True, если бот ДОЛЖЕН ответить на это сообщение.
+    Работает только для групп/супергрупп; в личке отвечаем всегда.
+    """
+    text = (message.text or "").strip()
+
+    # Ответом на бота — всегда отвечаем
+    if message.reply_to_message and message.reply_to_message.from_user and message.reply_to_message.from_user.is_bot:
         return True
 
-    # Проверка на сущности-mention (например @BotName)
-    if message.entities and message.text:
+    # Явное упоминание @бота — отвечаем
+    if message.entities and text:
         for entity in message.entities:
             if entity.type == "mention":
-                mention_text = message.text[entity.offset: entity.offset + entity.length]
+                mention_text = text[entity.offset: entity.offset + entity.length]
                 if mention_text.lstrip("@").lower() == bot_username:
                     return True
+                
+    # Обращение к боту как к слову
+    BOT_ADDRESS_RE = re.compile(r'(?i)(?<!\w)(?:нейро-?бот|бот)(?!\w)')
 
-    # ищем слово 'бот'
-    if message.text:
-        if re.search(r"бот", message.text.lower()):
-            return True
+    # Вопросительные маркеры и слова-подсказки
+    QUESTION_MARK_RE = re.compile(r'\?')
+    INTERROGATIVE_RE = re.compile(
+        r'(?i)\b('
+        r'как|почему|зачем|где|когда|сколько|кто|что|какой|какая|какие|чем|куда|откуда|'
+        r'можно ли|кто может помочь|кто поможет|подскаж(?:и|ите)|помогите|нужна помощь|help|помощь'
+        r')\b'
+    )
+    COMMAND_RE = re.compile(
+        r'(?i)\b('
+        r'объясни|расскажи|скажи|подскажи|помоги|проверь|сделай|напиши|создай|найди|покажи|настрой'
+        r')\b'
+    )
 
-    return False
+    # Очень короткий шум (эмодзи/1-2 слова без смысла)
+    NOISE_RE = re.compile(r'^\s*(?:[^\w\s]|[\w]{1,2})\s*$')
+
+    # Спам/шум/очень короткие — игнор
+    if not text or NOISE_RE.match(text):
+        return False
+
+    # Считаем "баллы намерения"
+    score = 0
+    if BOT_ADDRESS_RE.search(text):
+        score += 2
+    if QUESTION_MARK_RE.search(text):
+        score += 1
+    if INTERROGATIVE_RE.search(text):
+        score += 2
+    if COMMAND_RE.search(text):
+        score += 1
+
+    # Небольшой бонус за длину (часто вопросы длиннее)
+    if len(text) >= 25:
+        score += 1
+
+    # Порог можно крутить: 2 — довольно отзывчиво, 3 — осторожнее
+    return score >= 2
 
 
 @dp.message()
@@ -585,15 +748,28 @@ async def auto_reply(message: types.Message):
 
     # === ВАЖНО: требуем упоминание только в группах/супергруппах ===
     is_group = message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
-    if is_group and not is_mentioned_or_reply(message):
+    if is_group and not should_answer(message):
         logging.info("Пропущено сообщение без упоминания бота или ответа на бота (группа).")
         return
+    
     # В личке (private) — всегда отвечаем
-
     if not await is_subscribed(user_id) and user_id != 1087968824:
         print(f"Пользователь {user_id} не подписан")
         await message.reply("Подпишитесь на @MineBridgeOfficial, чтобы пользоваться ботом.")
         return
+
+    # ======== быстрый ответ по статусу сервера (fixed host) ========
+    txt = message.text.strip()
+    if STATUS_INTENT_RE.search(txt):
+        sent = await message.reply("🔎 Проверяю статус сервера...")
+        try:
+            payload = await fetch_mc_status(MC_SERVER_HOST, MC_SERVER_PORT)
+            text = format_mc_status_text(MC_SERVER_HOST, MC_SERVER_PORT, payload)
+            await safe_edit_to(sent, text)
+        except Exception as e:
+            await safe_edit_to(sent, f"⚠️ Не удалось получить статус: `{_shorten(str(e), 300)}`")
+        return
+    # ======== /быстрый ответ ========
 
     try:
         # (опционально) показать "печатает..."
