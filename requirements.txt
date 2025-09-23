@@ -1,5 +1,5 @@
 aiogram==3.22.0
 httpx==0.28.1
 numpy==2.3.3
-openai==1.108.1
+openai==1.108.2
 python-dotenv==1.1.1

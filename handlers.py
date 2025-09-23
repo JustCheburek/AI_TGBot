@@ -55,12 +55,9 @@ async def cmd_rag_reindex(message: types.Message):
     sent_msg = await message.reply("🔄 Перестраиваю индекс...")
     try:
         global RAG_CHUNKS
-        # force rebuild
-        import importlib
-        rag_mod = importlib.import_module(".rag", package=__package__)
-        rag_mod.RAG_LOADED = False
-        await rag_mod._ensure_rag_index()
-        await utils.safe_edit_to(sent_msg, f"✅ Готово. Чанков: {len(rag_mod.RAG_CHUNKS)}")
+        rag.RAG_LOADED = False
+        await rag._ensure_rag_index()
+        await utils.safe_edit_to(sent_msg, f"✅ Готово. Чанков: {len(rag.RAG_CHUNKS)}")
     except Exception as e:
         logging.exception("RAG reindex error")
         await utils.safe_edit_to(sent_msg, f"⚠️ Ошибка перестройки: {e}")
