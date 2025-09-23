@@ -137,12 +137,9 @@ async def auto_reply(message: types.Message):
             player_info = await fetch_player_by_nick(username)
             if player_info:
                 # краткое pretty-print (ограничим длину)
-                pretty = json.dumps(player_info, ensure_ascii=False, indent=2)
-                MAX_PLAYER_CHARS = 1500
-                if len(pretty) > MAX_PLAYER_CHARS:
-                    pretty = pretty[:MAX_PLAYER_CHARS] + "\n... (truncated)"
-                player_ctx = "Информация об игроке (источник: майнбридж.рф):\n" + pretty
+                player_ctx = "Информация об игроке (источник: майнбридж.рф):\n" + player_ctx
                 # Включаем player_ctx в rag_ctx (модель увидит эти данные вместе с KB выдержками)
+                print(player_ctx)  # отладка
                 if rag_ctx:
                     rag_ctx = player_ctx + "\n\n" + rag_ctx
                 else:
