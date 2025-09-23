@@ -117,9 +117,9 @@ async def fetch_player_by_nick(nick: str, use_cache: bool = True) -> Optional[st
 
     # data — dict, поэтому используем ключи словаря
     try:
-        data["invites"] = []
-        data["punishments"] = []
-        data["casesPurchases"] = []
+        del data["invites"]
+        del data["punishments"]
+        del data["casesPurchases"]
     except Exception:
         # на случай, если data не тот тип — логируем и продолжаем
         logger.exception("mb_api: unexpected data type for nick %s: %r", nick, type(data))
