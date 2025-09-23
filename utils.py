@@ -162,7 +162,7 @@ async def send_long_text(initial_msg: types.Message, base_message: types.Message
 STATUS_INTENT_RE = re.compile(
     r'(?i)\b('
     r'статус сервера|сервер онлайн|сервер оффлайн|онлайн сервера|'
-    r'сколько игроков|сколько людей на сервере|'
+    r'сколько игроков|сколько людей на сервере'
     r')\b'
 )
 

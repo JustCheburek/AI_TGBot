@@ -77,8 +77,12 @@ async def callback_any(query: types.CallbackQuery):
 async def auto_reply(message: types.Message):
     if not message.text:
         return
-
+    
     user_id = message.from_user.id
+    if not await is_subscribed(user_id) and user_id != 1087968824:
+        await message.reply("Подпишитесь на @MineBridgeOfficial, чтобы пользоваться ботом.")
+        return
+
     # robust chat type handling (works for aiogram returning enum or string)
     chat_type = getattr(message.chat, "type", None)
     if isinstance(chat_type, str):
@@ -87,14 +91,6 @@ async def auto_reply(message: types.Message):
         # chat_type may be an Enum with .name, or something else
         ct_name = getattr(chat_type, "name", str(chat_type)).upper()
     is_group = ct_name in ("GROUP", "SUPERGROUP")
-
-    if is_group and not utils.should_answer(message, bot_username):
-        logging.info("Пропущено сообщение без упоминания бота или ответа на бота (группа).")
-        return
-
-    if not await is_subscribed(user_id) and user_id != 1087968824:
-        await message.reply("Подпишитесь на @MineBridgeOfficial, чтобы пользоваться ботом.")
-        return
 
     txt = message.text.strip()
     if utils.STATUS_INTENT_RE.search(txt):
@@ -105,6 +101,10 @@ async def auto_reply(message: types.Message):
             await utils.safe_edit_to(sent, text)
         except Exception as e:
             await utils.safe_edit_to(sent, f"⚠️ Не удалось получить статус: `{utils._shorten(str(e), 300)}`")
+        return
+
+    if is_group and not utils.should_answer(message, bot_username):
+        logging.info("Пропущено сообщение без упоминания бота или ответа на бота (группа).")
         return
 
     try:

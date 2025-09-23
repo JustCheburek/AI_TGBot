@@ -1,7 +1,6 @@
 # mc.py
 import asyncio
 import httpx
-import logging
 import re
 from typing import Tuple
 
