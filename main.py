@@ -1,7 +1,7 @@
 import asyncio
 import logging
-from bot_init import *
-import rag
+from src.bot_init import *
+import src.rag as rag
 
 async def on_startup():
     global bot_username
