@@ -137,9 +137,8 @@ async def auto_reply(message: types.Message):
             player_info = await fetch_player_by_nick(username)
             if player_info:
                 # краткое pretty-print (ограничим длину)
-                player_ctx = "Информация об игроке (источник: майнбридж.рф):\n" + player_ctx
+                player_ctx = "Информация об игроке (источник: майнбридж.рф):\n" + player_info
                 # Включаем player_ctx в rag_ctx (модель увидит эти данные вместе с KB выдержками)
-                print(player_ctx)  # отладка
                 if rag_ctx:
                     rag_ctx = player_ctx + "\n\n" + rag_ctx
                 else:
