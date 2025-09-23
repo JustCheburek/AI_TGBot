@@ -1,5 +1,6 @@
 # handlers.py
 import logging
+import json  # <-- добавлено для форматирования player_info
 
 from aiogram import types
 from aiogram.filters import Command
@@ -10,6 +11,7 @@ import utils
 import mc
 import rag
 import handlers_helpers
+from mb_api import fetch_player_from_tg_user
 
 # is_subscribed implementation (uses bot)
 async def is_subscribed(user_id: int) -> bool:
@@ -120,10 +122,30 @@ async def auto_reply(message: types.Message):
 
         rag_ctx = ""
         try:
+            # Получаем RAG контекст (если включён)
             if config.RAG_ENABLED:
                 rag_ctx = await rag.build_context(message.text, k=6, max_chars=2000)
         except Exception:
             logging.exception("RAG: failed to build context")
+
+        # --- NEW: fetch player info from майнбридж API (mb_api.fetch_player_from_tg_user)
+        player_ctx = ""
+        try:
+            player_info = await fetch_player_from_tg_user(message.from_user)
+            if player_info:
+                # краткое pretty-print (ограничим длину)
+                pretty = json.dumps(player_info, ensure_ascii=False, indent=2)
+                MAX_PLAYER_CHARS = 1500
+                if len(pretty) > MAX_PLAYER_CHARS:
+                    pretty = pretty[:MAX_PLAYER_CHARS] + "\n... (truncated)"
+                player_ctx = "Информация об игроке (источник: майнбридж.рф):\n" + pretty
+                # Включаем player_ctx в rag_ctx (модель увидит эти данные вместе с KB выдержками)
+                if rag_ctx:
+                    rag_ctx = player_ctx + "\n\n" + rag_ctx
+                else:
+                    rag_ctx = player_ctx
+        except Exception:
+            logging.exception("mb_api: failed to fetch player info")
 
         username = (message.from_user.username or f"{message.from_user.first_name}")
         conv_key = utils.make_key(message)
