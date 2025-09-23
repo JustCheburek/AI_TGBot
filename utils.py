@@ -194,7 +194,7 @@ def should_answer(message: types.Message, bot_username: str) -> bool:
         return False
     score = 0
     if BOT_ADDRESS_RE.search(text):
-        score += 2
+        score += 3
     if QUESTION_MARK_RE.search(text):
         score += 1
     if INTERROGATIVE_RE.search(text):
