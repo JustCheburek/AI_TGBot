@@ -11,7 +11,7 @@ import utils
 import mc
 import rag
 import handlers_helpers
-from mb_api import fetch_player_from_tg_user
+from mb_api import fetch_player_by_nick
 
 # is_subscribed implementation (uses bot)
 async def is_subscribed(user_id: int) -> bool:
@@ -117,6 +117,9 @@ async def auto_reply(message: types.Message):
 
         sent_msg = await message.reply("⏳ *Печатаю...*")
 
+        username = (message.from_user.username or f"{message.from_user.first_name}")
+        conv_key = utils.make_key(message)
+
         sys_prompt = utils.load_system_prompt_for_chat(message.chat)
         sys_prompt += "\n\nВАЖНО: В ответе не показывай служебные индексы источников (вида [xxxxxxxxxx:0] или 0d829391f3:0)."
 
@@ -128,10 +131,10 @@ async def auto_reply(message: types.Message):
         except Exception:
             logging.exception("RAG: failed to build context")
 
-        # --- NEW: fetch player info from майнбридж API (mb_api.fetch_player_from_tg_user)
+        # --- NEW: fetch player info from майнбридж API (mb_api.fetch_player_by_nick)
         player_ctx = ""
         try:
-            player_info = await fetch_player_from_tg_user(message.from_user)
+            player_info = await fetch_player_by_nick(username)
             if player_info:
                 # краткое pretty-print (ограничим длину)
                 pretty = json.dumps(player_info, ensure_ascii=False, indent=2)
@@ -146,9 +149,6 @@ async def auto_reply(message: types.Message):
                     rag_ctx = player_ctx
         except Exception:
             logging.exception("mb_api: failed to fetch player info")
-
-        username = (message.from_user.username or f"{message.from_user.first_name}")
-        conv_key = utils.make_key(message)
 
         # call OpenAI (non-stream). Keep as in original file
         answer = await handlers_helpers.complete_openai_nostream(
