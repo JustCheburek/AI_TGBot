@@ -1,3 +1,4 @@
+# handlers_helpers.py
 import logging
 import asyncio
 from typing import Tuple
@@ -47,7 +48,7 @@ async def complete_openai_nostream(user_text: str, name: str, conv_key: HistoryK
     prompt = (user_text or "").strip()
     if not prompt:
         return ""
-    prompt = utils.shorten(prompt)
+    prompt = utils._shorten(prompt)
     utils.remember_user(conv_key, prompt)
     input_with_ctx = utils.build_input_with_history(conv_key, prompt, name)
     if rag_ctx:

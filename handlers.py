@@ -1,5 +1,5 @@
+# handlers.py
 import logging
-import asyncio
 
 from aiogram import types
 from aiogram.filters import Command
@@ -9,6 +9,7 @@ import config
 import utils
 import mc
 import rag
+import handlers_helpers
 
 # is_subscribed implementation (uses bot)
 async def is_subscribed(user_id: int) -> bool:
@@ -44,7 +45,7 @@ async def cmd_status(message: types.Message):
         text = mc.format_status_text(config.MC_SERVER_HOST, config.MC_SERVER_PORT, payload)
         await utils.safe_edit_to(sent, text)
     except Exception as e:
-        await utils.safe_edit_to(sent, f"⚠️ Не удалось получить статус: `{_shorten(str(e), 300)}`")
+        await utils.safe_edit_to(sent, f"⚠️ Не удалось получить статус: `{utils._shorten(str(e), 300)}`")
 
 @dp.message(Command("rag_reindex"))
 async def cmd_rag_reindex(message: types.Message):
@@ -81,7 +82,15 @@ async def auto_reply(message: types.Message):
         return
 
     user_id = message.from_user.id
-    is_group = message.chat.type.name in ("GROUP", "SUPERGROUP")
+    # robust chat type handling (works for aiogram returning enum or string)
+    chat_type = getattr(message.chat, "type", None)
+    if isinstance(chat_type, str):
+        ct_name = chat_type.upper()
+    else:
+        # chat_type may be an Enum with .name, or something else
+        ct_name = getattr(chat_type, "name", str(chat_type)).upper()
+    is_group = ct_name in ("GROUP", "SUPERGROUP")
+
     if is_group and not utils.should_answer(message, bot_username):
         logging.info("Пропущено сообщение без упоминания бота или ответа на бота (группа).")
         return
@@ -91,7 +100,7 @@ async def auto_reply(message: types.Message):
         return
 
     txt = message.text.strip()
-    if config.STATUS_INTENT_RE.search(txt):
+    if utils.STATUS_INTENT_RE.search(txt):
         sent = await message.reply("🔎 Проверяю статус сервера...")
         try:
             payload = await mc.fetch_status(config.MC_SERVER_HOST, config.MC_SERVER_PORT)
@@ -123,7 +132,7 @@ async def auto_reply(message: types.Message):
         conv_key = utils.make_key(message)
 
         # call OpenAI (non-stream). Keep as in original file
-        answer = await utils.complete_openai_nostream(
+        answer = await handlers_helpers.complete_openai_nostream(
             message.text,
             username,
             conv_key,

@@ -1,28 +1,46 @@
+# main.py
 import asyncio
 import logging
-from bot_init import *
+import traceback
+
+from bot_init import bot, dp
 import rag
+import handlers # жизненно важный импорт, чтобы зарегистрировать хэндлеры
+
+logging.basicConfig(level=logging.DEBUG)
 
 async def on_startup():
-    global bot_username
+    global bot
     try:
         me = await bot.get_me()
-        bot_username = (me.username or "").lower()
-        logging.info(f"Bot username: @{bot_username}")
+        logging.info(f"Bot username: @{(me.username or '').lower()}")
     except Exception:
         logging.exception("Failed to get bot username on startup")
     try:
-        if True:
+        if hasattr(rag, "_ensure_rag_index"):
             await rag._ensure_rag_index()
     except Exception:
         logging.exception("RAG: failed to ensure index on startup")
 
 async def shutdown():
     try:
-        if hasattr(openai_client, "close") and asyncio.iscoroutinefunction(openai_client.close):
-            await openai_client.close()
+        # если у openai-клиента есть aclose/close — корректно закроем
+        from bot_init import openai_client  # если openai_client объявлен в bot_init
+        aclose = getattr(openai_client, "aclose", None)
+        if callable(aclose):
+            if asyncio.iscoroutinefunction(aclose):
+                await aclose()
+            else:
+                aclose()
+        else:
+            close = getattr(openai_client, "close", None)
+            if callable(close):
+                res = close()
+                if asyncio.iscoroutine(res):
+                    await res
     except Exception:
-        pass
+        logging.exception("Error closing openai client")
+
     try:
         await bot.session.close()
     except Exception:
@@ -30,8 +48,15 @@ async def shutdown():
 
 async def main():
     await on_startup()
+
+    # отладочное логирование: покажем, что модуль handlers импортирован
+    logging.info("Handlers imported; starting polling")
+
     try:
         await dp.start_polling(bot)
+    except Exception as e:
+        logging.exception("Fatal polling error: %s", e)
+        traceback.print_exc()
     finally:
         await shutdown()
 

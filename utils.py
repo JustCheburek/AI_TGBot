@@ -1,5 +1,5 @@
+# utils.py
 import re
-import json
 import hashlib
 import logging
 import asyncio
@@ -18,7 +18,7 @@ from bot_init import *
 HistoryKey = Tuple[int, int]  # (chat_id, user_id)
 HISTORY: Dict[HistoryKey, Deque[Tuple[str, str]]] = defaultdict(lambda: deque(maxlen=config.MAX_HISTORY_MESSAGES))
 
-def _shorten(s: str, limit: int = 300) -> str:
+def _shorten(s: str, limit: int = 400) -> str:
     s = (s or "").strip()
     return (s[:limit] + "...") if len(s) > limit else s
 
