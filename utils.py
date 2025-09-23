@@ -44,10 +44,10 @@ def build_input_with_history(key: HistoryKey, user_text: str, name: str) -> str:
     lines.append("Ассистент:")
     return "\n".join(lines)
 
-def _hash(s: str) -> str:
+def hash(s: str) -> str:
     return hashlib.sha1(s.encode("utf-8")).hexdigest()[:10]
 
-def _read_text_file(p: Path) -> str:
+def read_text_file(p: Path) -> str:
     try:
         raw = p.read_text(encoding="utf-8", errors="ignore")
         if raw.startswith("\ufeff"):
@@ -57,7 +57,7 @@ def _read_text_file(p: Path) -> str:
         logging.exception("RAG: failed to read %s", p)
         return ""
 
-def _split_chunks(text: str, size: int, ov: int) -> list[str]:
+def split_chunks(text: str, size: int, ov: int) -> list[str]:
     text = text.strip()
     if not text:
         return []
@@ -206,36 +206,3 @@ def should_answer(message: types.Message, bot_username: str) -> bool:
         score += 1
     return score >= 2
 
-# extract retry-after seconds from exceptions (kept close to original)
-async def _extract_retry_after_seconds(err) -> float | None:
-    try:
-        headers = getattr(err, "headers", None) or {}
-        if headers:
-            ra = headers.get("retry-after") or headers.get("Retry-After")
-            if ra:
-                try:
-                    return float(ra)
-                except Exception:
-                    pass
-    except Exception:
-        pass
-    try:
-        ra = getattr(err, "retry_after", None)
-        if ra is not None:
-            return float(ra)
-    except Exception:
-        pass
-    try:
-        msg = str(err)
-        m = re.search(r'(\d+)\s*m(?:in)?\s*(\d+)\s*s', msg)
-        if m:
-            return int(m.group(1)) * 60 + int(m.group(2))
-        m2 = re.search(r'in\s*(\d+)\s*s', msg)
-        if m2:
-            return int(m2.group(1))
-        m3 = re.search(r'(\d+)\s*seconds', msg)
-        if m3:
-            return int(m3.group(1))
-    except Exception:
-        pass
-    return None

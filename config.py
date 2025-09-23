@@ -16,8 +16,8 @@ MC_SERVER_PORT = int(os.getenv("MC_SERVER_PORT", "25565"))
 
 # RAG
 BASE_DIR = Path(__file__).resolve().parent
-KB_DIR = BASE_DIR.parent / "kb"
-RAG_INDEX_DIR = BASE_DIR.parent / ".rag_cache"
+KB_DIR = Path(__file__).resolve().parent / "kb"          # положите сюда .txt/.md файлы
+RAG_INDEX_DIR = Path(__file__).resolve().parent / ".rag_cache"
 RAG_ENABLED = True
 RAG_CHUNK_SIZE = 900
 RAG_CHUNK_OVERLAP = 150
