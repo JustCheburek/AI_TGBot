@@ -105,7 +105,7 @@ async def safe_edit_to(msg: types.Message, text: str, markdown: bool = True) -> 
     backoff = 1.0
     while True:
         try:
-            await msg.edit_text(text, parse_mode=(ParseMode.MARKDOWN if markdown else None))
+            await msg.edit_text(text, parse_mode=(ParseMode.MARKDOWN_V2 if markdown else None))
             return True
         except TelegramRetryAfter as e:
             attempt += 1
@@ -133,7 +133,7 @@ async def safe_send_reply(base_message: types.Message, text: str):
     backoff = 1.0
     while True:
         try:
-            return await base_message.reply(text, parse_mode=ParseMode.MARKDOWN)
+            return await base_message.reply(text, parse_mode=ParseMode.MARKDOWN_V2)
         except TelegramRetryAfter as e:
             attempt += 1
             wait = getattr(e, "retry_after", backoff)
