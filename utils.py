@@ -203,5 +203,5 @@ def should_answer(message: types.Message, bot_username: str) -> bool:
         score += 1
     if len(text) >= 25:
         score += 1
-    return score >= 2
+    return score >= 3
 
