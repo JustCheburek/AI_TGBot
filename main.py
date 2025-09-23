@@ -4,8 +4,7 @@ import logging
 import traceback
 
 from bot_init import bot, dp
-import rag
-import handlers # жизненно важный импорт, чтобы зарегистрировать хэндлеры
+import config, rag, mc, utils, handlers, handlers_helpers # испорт всего-всего
 
 logging.basicConfig(level=logging.DEBUG)
 
