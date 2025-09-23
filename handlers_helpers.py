@@ -62,7 +62,7 @@ async def complete_openai_nostream(user_text: str, name: str, conv_key: HistoryK
                     {"role": "system", "content": sys_prompt},
                     {"role": "user", "content": input_with_ctx},
                 ],
-                temperature=0.5,
+                temperature=1,
             )
             text = (resp.choices[0].message.content or "").strip()
             if text:
