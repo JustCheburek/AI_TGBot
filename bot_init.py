@@ -8,7 +8,7 @@ import config
 
 logging.basicConfig(level=logging.INFO)
 
-bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN_V2))
+bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
 dp = Dispatcher()
 openai_client = AsyncOpenAI(api_key=config.OPENAI_API_KEY, base_url="https://openrouter.ai/api/v1")
 
