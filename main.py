@@ -50,7 +50,7 @@ openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY, base_url="https://openrouter
 bot_username = "minebridge52bot"
 
 # === Контекст N сообщений ===
-MAX_HISTORY_MESSAGES = 3  # храним всего N последних сообщений (user/assistant вперемешку)
+MAX_HISTORY_MESSAGES = 5  # храним всего N последних сообщений (user/assistant вперемешку)
 HistoryKey = Tuple[int, int]  # (chat_id, user_id)
 HISTORY: Dict[HistoryKey, Deque[Tuple[str, str]]] = defaultdict(lambda: deque(maxlen=MAX_HISTORY_MESSAGES))
 
