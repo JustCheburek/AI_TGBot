@@ -9,4 +9,5 @@
 - Лор: майнбридж.рф/features/lor
 - Коллекции/«Млечный путь»: майнбридж.рф/milkyway
 - Стримеры и активность: майнбридж.рф/features/streamers
+- Карта сервера: map.m-br.ru
 - Поддержка: t.me/HelpSupportMineBridgeBot
