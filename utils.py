@@ -158,14 +158,6 @@ async def send_long_text(initial_msg: types.Message, base_message: types.Message
     for part in parts[1:]:
         await safe_send_reply(base_message, part)
 
-# intent helpers (copied from original)
-STATUS_INTENT_RE = re.compile(
-    r'(?i)\b('
-    r'статус сервера|сервер онлайн|сервер оффлайн|онлайн сервера|'
-    r'сколько игроков|сколько людей на сервере'
-    r')\b'
-)
-
 def should_answer(message: types.Message, bot_username: str) -> bool:
     text = (message.text or "").strip()
     if message.reply_to_message and message.reply_to_message.from_user and message.reply_to_message.from_user.is_bot:

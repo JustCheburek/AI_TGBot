@@ -94,17 +94,6 @@ async def auto_reply(message: types.Message):
         ct_name = getattr(chat_type, "name", str(chat_type)).upper()
     is_group = ct_name in ("GROUP", "SUPERGROUP")
 
-    txt = message.text.strip()
-    if utils.STATUS_INTENT_RE.search(txt):
-        sent = await message.reply("🔎 Проверяю статус сервера...")
-        try:
-            payload = await mc.fetch_status(config.MC_SERVER_HOST, config.MC_SERVER_PORT)
-            text = mc.format_status_text(config.MC_SERVER_HOST, config.MC_SERVER_PORT, payload)
-            await utils.safe_edit_to(sent, text)
-        except Exception as e:
-            await utils.safe_edit_to(sent, f"⚠️ Не удалось получить статус: `{utils._shorten(str(e), 300)}`")
-        return
-
     if is_group and not utils.should_answer(message, bot_username):
         logging.info("Пропущено сообщение без упоминания бота или ответа на бота (группа).")
         return
@@ -145,6 +134,17 @@ async def auto_reply(message: types.Message):
                     rag_ctx = player_ctx
         except Exception:
             logging.exception("mb_api: failed to fetch player info")
+
+        server_ctx = ""
+        try:
+            payload = await mc.fetch_status(config.MC_SERVER_HOST, config.MC_SERVER_PORT)
+            server_ctx = mc.format_status_text(config.MC_SERVER_HOST, config.MC_SERVER_PORT, payload)
+            if rag_ctx:
+                rag_ctx = server_ctx + "\n\n" + rag_ctx
+            else:
+                rag_ctx = server_ctx
+        except Exception as e:
+            logging.exception("mc: failed to fetch server status")
 
         # call OpenAI (non-stream). Keep as in original file
         answer = await handlers_helpers.complete_openai_nostream(
