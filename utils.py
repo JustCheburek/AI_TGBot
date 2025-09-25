@@ -226,6 +226,6 @@ def get_user_freeze(user_id: int) -> Optional[float]:
 def is_user_frozen(user_id: int) -> bool:
     return get_user_freeze(user_id) is not None
 
-def format_freeze_until(ts: float) -> str:
-    return datetime.fromtimestamp(ts).strftime('%d.%m %H:%M')
 
+def get_hour_string(hours: int) -> str:
+    return f"{hours} час" if hours == 1 else f"{hours} часа"

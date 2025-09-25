@@ -1,5 +1,6 @@
 # handlers.py
 import logging
+import time
 
 from aiogram import types
 from aiogram.filters import Command
@@ -30,19 +31,20 @@ async def cmd_freeze(message: types.Message):
     buttons = []
 
     for hours in config.FREEZE_OPTIONS:
-        title = "1 час" if hours == 1 else f"{hours} часа"
         callback = f"freeze:{id}:{hours}"
-        buttons.append(types.InlineKeyboardButton(text=title, callback_data=callback))
+        buttons.append(types.InlineKeyboardButton(text=utils.get_hour_string(hours), callback_data=callback))
 
     rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=rows)
 
     current_freeze = utils.get_user_freeze(id)
-
     if current_freeze:
-        current_freeze = f"\nТекущая заморозка действует до {utils.format_freeze_until(current_freeze)}"
+        minites_unfreeze = round((current_freeze - time.time()) / 60)
+        current_freeze = f"\n⏳ Текущая заморозка действует ещё **{minites_unfreeze} мин**"
+    else:
+        current_freeze = ""
 
-    text_body = f"Выбери длительность заморозки автоответов" + current_freeze
+    text_body = f"❄️ Выбери *длительность заморозки автоответов*" + current_freeze
 
     await message.reply(text_body, reply_markup=keyboard)
 
@@ -92,20 +94,21 @@ async def cmd_rag_reindex(message: types.Message):
 
 @dp.callback_query()
 async def callback_any(query: types.CallbackQuery):
+    username = (query.from_user.username or f"{query.from_user.first_name}")
     data = (query.data or "").strip()
 
     if data.startswith("freeze:"):
         parts = data.split(":")
-        if len(parts) != 4:
+        if len(parts) != 3:
             await query.answer("Не удалось применить заморозку.", show_alert=True)
             return
-        _, target_id_str, hours_str, initiator_str = parts
-        if initiator_str != str(query.from_user.id):
+        _, id, hours = parts
+        if id != str(query.from_user.id):
             await query.answer("Это меню предназначено для другого игрока", show_alert=True)
             return
         try:
-            target_id = int(target_id_str)
-            hours = int(hours_str)
+            id = int(id)
+            hours = int(hours)
         except ValueError:
             await query.answer("Недопустимые параметры", show_alert=True)
             return
@@ -113,11 +116,10 @@ async def callback_any(query: types.CallbackQuery):
             await query.answer("Недопустимая длительность", show_alert=True)
             return
 
-        expires_at = utils.set_user_freeze(target_id, hours)
-        until_text = utils.format_freeze_until(expires_at)
+        utils.set_user_freeze(id, hours)
         try:
             if query.message:
-                await query.message.edit_text(f"Автоответы заморожены до {until_text}.")
+                await query.message.edit_text(f"❄️ Автоответы заморожены для *{username}* на *{utils.get_hour_string(hours)}*")
         except Exception:
             logging.exception("freeze: failed to edit confirmation message")
         await query.answer("Готово")
