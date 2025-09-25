@@ -205,7 +205,7 @@ async def auto_reply(message: types.Message):
         conv_key = utils.make_key(message)
 
         sys_prompt = utils.load_system_prompt_for_chat(message.chat)
-        sys_prompt += "\n\nИспользуй HTML-разметку для форматирования ответа. Все ссылки вставляй сразу в текст.\n"
+        sys_prompt += "\n\nВажно: Используй HTML-разметку для форматирования ответа. MarkDown НЕЛЬЗЯ! Все ссылки вставляй сразу в текст.\n"
         sys_prompt += "ВАЖНО: В ответе не показывай служебные индексы источников (вида [xxxxxxxxxx:0] или 0d829391f3:0)"
 
         rag_ctx = ""

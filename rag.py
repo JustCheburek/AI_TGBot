@@ -145,7 +145,7 @@ async def build_full_context(
         payload = await mc.fetch_status()
         server_ctx = mc.format_status_text(payload)
         if server_ctx:
-            sections.append(server_ctx)
+            sections.append(f"Пиши про статус, только когда просят\n{server_ctx}")
     except Exception:
         logging.exception("RAG: failed to fetch server status")
 
@@ -154,7 +154,7 @@ async def build_full_context(
         try:
             player_info = await fetch_player_by_nick(username)
             if player_info:
-                sections.append("Игрок (из MineBridge API):\n" + player_info)
+                sections.append("Игрок (из MineBridge API):\nИспользуй данные аккаунта, только когда просят\n" + player_info)
         except Exception:
             logging.exception("RAG: failed to fetch player info")
 
