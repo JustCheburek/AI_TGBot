@@ -14,9 +14,19 @@ from aiogram.enums import ChatType
 import config
 from bot_init import *
 
-# ===== History storage =====
+# ===== Per-user short history (диалоги пользователь↔ассистент) =====
 HistoryKey = Tuple[int, int]  # (chat_id, user_id)
-HISTORY: Dict[HistoryKey, Deque[Tuple[str, str]]] = defaultdict(lambda: deque(maxlen=config.MAX_HISTORY_MESSAGES))
+HISTORY: Dict[HistoryKey, Deque[Tuple[str, str]]] = defaultdict(
+    lambda: deque(maxlen=config.MAX_HISTORY_MESSAGES)
+)
+
+# ===== Per-chat raw history (последние сообщения чата) =====
+# Храним только необходимые поля, чтобы не тащить целый Message.
+# (author, is_bot, text)
+ChatLine = Tuple[str, bool, str]
+CHAT_LOGS: Dict[int, Deque[ChatLine]] = defaultdict(
+    lambda: deque(maxlen=config.MAX_HISTORY_MESSAGES * 3)
+)
 
 def _shorten(s: str, limit: int = 400) -> str:
     s = (s or "").strip()
@@ -35,11 +45,64 @@ def build_input_with_history(key: HistoryKey, user_text: str, name: str) -> str:
     lines: List[str] = []
     hist = HISTORY.get(key)
     if hist:
-        lines.append("Контекст предыдущих сообщений (до 5):")
+        lines.append(f"Контекст предыдущих сообщений (до {config.MAX_HISTORY_MESSAGES}):")
         for role, text in hist:
             who = "Пользователь" if role == "user" else "Ассистент"
             lines.append(f"{who}: {text}")
-        lines.append("—")
+        lines.append("Конец контекста")
+    lines.append(f"Пользователь ({name}): {user_text}")
+    lines.append("Ассистент:")
+    return "\n".join(lines)
+
+# ====== СОХРАНЕНИЕ СООБЩЕНИЙ ЧАТА ======
+
+def _author_from(msg: types.Message) -> str:
+    user = getattr(msg, "from_user", None)
+    if not user:
+        return "неизвестно"
+    return (getattr(user, "username", None) or getattr(user, "first_name", "") or "безымянный")
+
+def save_incoming_message(message: types.Message) -> None:
+    """Сохраняем входящее сообщение в чат-лог (для контекста последних N сообщений)."""
+    chat_id = message.chat.id
+    text = (message.text or "").strip()
+    if not text:
+        return
+    author = _author_from(message)
+    is_bot = bool(getattr(message.from_user, "is_bot", False))
+    CHAT_LOGS[chat_id].append((author, is_bot, _shorten(text)))
+
+def save_outgoing_message(chat_id: int, text: str, bot_display_name: str = "Ассистент") -> None:
+    """Сохраняем исходящее (ответ бота) в чат-лог."""
+    if not text:
+        return
+    CHAT_LOGS[chat_id].append((bot_display_name, True, _shorten(text)))
+
+async def build_input_from_chat_thread(
+    message: types.Message,
+    user_text: str,
+    name: str,
+    max_messages: int = 15
+) -> str:
+    """
+    Формируем контекст из последних max_messages сообщений чата,
+    сохранённых локально в CHAT_LOGS (а не через reply_to_message и не через get_chat_history).
+    """
+    lines: List[str] = []
+    chat_id = message.chat.id
+
+    # Берём последние max_messages сохранённых записей
+    thread: List[ChatLine] = list(CHAT_LOGS.get(chat_id, deque()))[-max_messages:]
+
+    if thread:
+        lines.append("Контекст беседы среди разных игроков:")
+        for author, is_bot, text in thread:
+            if not text:
+                continue
+            role = "Ассистент" if is_bot else author
+            lines.append(f"{role}: {text}")
+        lines.append("Конец контекста")
+
     lines.append(f"Пользователь ({name}): {user_text}")
     lines.append("Ассистент:")
     return "\n".join(lines)
@@ -47,8 +110,33 @@ def build_input_with_history(key: HistoryKey, user_text: str, name: str) -> str:
 def hash(s: str) -> str:
     return hashlib.sha1(s.encode("utf-8")).hexdigest()[:10]
 
-def remove_br(text: str) -> str:
-    return re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+def remove_html(text: str) -> str:
+    # Разрешённые HTML-теги
+    allowed_tags = [
+        r"<b>.*?</b>",
+        r"<strong>.*?</strong>",
+        r"<i>.*?</i>",
+        r"<em>.*?</em>",
+        r"<code>.*?</code>",
+        r"<s>.*?</s>",
+        r"<strike>.*?</strike>",
+        r"<del>.*?</del>",
+        r"<u>.*?</u>",
+        r"<pre.*?>.*?</pre>",  # язык внутри <pre language="...">
+    ]
+    
+    # Собираем whitelist в одно регулярное выражение
+    whitelist_pattern = "|".join(allowed_tags)
+
+    # Всё, что не попадает в whitelist → убираем
+    def replacer(match):
+        if re.fullmatch(whitelist_pattern, match.group(0), flags=re.IGNORECASE | re.DOTALL):
+            return match.group(0)
+        return ""
+
+    # Убираем все теги/markdown, кроме whitelist
+    cleaned = re.sub(r"<.*?>|(\*\*.*?\*\*|\*.*?\*|`.*?`|~~.*?~~)", replacer, text, flags=re.IGNORECASE | re.DOTALL)
+    return cleaned
 
 def read_text_file(p: Path) -> str:
     try:

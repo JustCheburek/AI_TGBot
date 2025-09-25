@@ -44,13 +44,31 @@ async def _extract_retry_after_seconds(err) -> float | None:
         pass
     return None
 
-async def complete_openai_nostream(user_text: str, name: str, conv_key: HistoryKey, sys_prompt: str, rag_ctx: str | None = None) -> str:
+async def complete_openai_nostream(user_text: str, name: str, conv_key: HistoryKey, sys_prompt: str, rag_ctx: str | None = None, *, message=None) -> str:
     prompt = (user_text or "").strip()
     if not prompt:
         return ""
     prompt = utils._shorten(prompt)
-    utils.remember_user(conv_key, prompt)
-    input_with_ctx = utils.build_input_with_history(conv_key, prompt, name)
+    # Build input differently for group chats: fetch context from chat thread on demand
+    chat_id = conv_key[0]
+    # message is aiogram.types.Message; if provided and chat is group, use reply chain, skip local history
+    use_thread = False
+    try:
+        if message is not None:
+            from aiogram.enums import ChatType
+            chat_type = getattr(message.chat, "type", None)
+            if chat_type in (ChatType.GROUP, ChatType.SUPERGROUP):
+                use_thread = True
+    except Exception:
+        pass
+
+    if use_thread and message is not None:
+        input_with_ctx = await utils.build_input_from_chat_thread(message, prompt, name)
+        utils.save_incoming_message(message)
+    else:
+        input_with_ctx = utils.build_input_with_history(conv_key, prompt, name)
+        utils.remember_user(conv_key, prompt)
+        
     if rag_ctx:
         input_with_ctx = f"{rag_ctx}\n\n{input_with_ctx}"
     attempt = 0
@@ -65,9 +83,12 @@ async def complete_openai_nostream(user_text: str, name: str, conv_key: HistoryK
                 temperature=1,
             )
             text = (resp.choices[0].message.content or "").strip()
-            text = utils.remove_br(text)
+            text = utils.remove_html(text)
             if text:
-                utils.remember_assistant(conv_key, text)
+                if not use_thread:
+                    utils.remember_assistant(conv_key, text)
+                else:
+                    utils.save_outgoing_message(chat_id, text)
             return text
         except (RateLimitError, APIError) as e:
             attempt += 1
