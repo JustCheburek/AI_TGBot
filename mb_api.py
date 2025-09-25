@@ -118,7 +118,7 @@ async def fetch_player_by_nick(nick: str, use_cache: bool = True) -> Optional[st
     
     try:
         player = {
-            "Звёзды (рейтинг)": player_data.get("rating2") or 0,
+            "Звёзды (рейтинг)": player_data.get("rating") or 0,
             "Погасшие звёзды (скидок)": player_data.get("faded_rating") or 0,
             "Наигранные часы": player_data.get("hours") or 0,
             "Был онлайн на сайте": player_data.get("onlineAt") or "N/A",
