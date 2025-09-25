@@ -8,6 +8,8 @@ import httpx
 
 import config
 import utils
+import mc
+from mb_api import fetch_player_by_nick
 
 RAG_CHUNKS = []   # [{id, file, text, mtime}]
 RAG_VECS = None
@@ -130,21 +132,68 @@ async def search(query: str, k: int = config.RAG_TOP_K):
     top_idx = np.argsort(-sims)[:k]
     return [(RAG_CHUNKS[i], float(sims[i])) for i in top_idx]
 
-async def build_context(user_query: str, k: int = config.RAG_TOP_K, max_chars: int = 2000) -> str:
+async def build_full_context(
+    user_query: str,
+    username: str | None = None,
+    k: int = config.RAG_TOP_K,
+    max_chars: int = 2000,
+) -> str:
+    sections: list[str] = []
+
+    # Dynamic server context
+    try:
+        payload = await mc.fetch_status()
+        server_ctx = mc.format_status_text(payload)
+        if server_ctx:
+            sections.append(server_ctx)
+    except Exception:
+        logging.exception("RAG: failed to fetch server status")
+
+    # Dynamic player context
+    if username:
+        try:
+            player_info = await fetch_player_by_nick(username)
+            if player_info:
+                sections.append("Игрок (из MineBridge API):\n" + player_info)
+        except Exception:
+            logging.exception("RAG: failed to fetch player info")
+
+    # Knowledge base via semantic search
     results = await search(user_query, k=k)
-    if not results:
-        return ""
-    lines = ["Ниже выдержки из базы знаний. Используй их только как справку и не включай служебные индексы/ссылки в ответ."]
-    total = 0
-    for ch, sc in results:
-        snippet = ch["text"].strip()
-        if not snippet:
-            continue
-        if total + len(snippet) > max_chars:
-            snippet = snippet[:max(0, max_chars - total)]
-        lines.append(snippet)
-        total += len(snippet)
-        if total >= max_chars:
-            break
-    lines.append("— Конец выдержек —")
-    return "\n".join(lines)
+    if results:
+        total = 0
+        kb_parts: list[str] = []
+        for ch, _sc in results:
+            snippet = (ch.get("text") or "").strip()
+            if not snippet:
+                continue
+            if total + len(snippet) > max_chars:
+                snippet = snippet[: max(0, max_chars - total)]
+            if snippet:
+                kb_parts.append(snippet)
+                total += len(snippet)
+            if total >= max_chars:
+                break
+        if kb_parts:
+            sections.append("\n".join(kb_parts))
+
+    return "\n\n".join([s for s in sections if s])
+
+# async def build_context(user_query: str, k: int = config.RAG_TOP_K, max_chars: int = 2000) -> str:
+#     results = await search(user_query, k=k)
+#     if not results:
+#         return ""
+#     lines = ["Ниже выдержки из базы знаний. Используй их только как справку и не включай служебные индексы/ссылки в ответ."]
+#     total = 0
+#     for ch, sc in results:
+#         snippet = ch["text"].strip()
+#         if not snippet:
+#             continue
+#         if total + len(snippet) > max_chars:
+#             snippet = snippet[:max(0, max_chars - total)]
+#         lines.append(snippet)
+#         total += len(snippet)
+#         if total >= max_chars:
+#             break
+#     lines.append("— Конец выдержек —")
+#     return "\n".join(lines)

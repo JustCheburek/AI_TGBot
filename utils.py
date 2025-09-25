@@ -47,6 +47,9 @@ def build_input_with_history(key: HistoryKey, user_text: str, name: str) -> str:
 def hash(s: str) -> str:
     return hashlib.sha1(s.encode("utf-8")).hexdigest()[:10]
 
+def remove_br(text: str) -> str:
+    return re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+
 def read_text_file(p: Path) -> str:
     try:
         raw = p.read_text(encoding="utf-8", errors="ignore")

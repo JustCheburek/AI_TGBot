@@ -1,4 +1,4 @@
-# handlers.py
+﻿# handlers.py
 import logging
 import time
 import re
@@ -13,7 +13,6 @@ import mc
 import rag
 import handlers_helpers
 import msgs
-from mb_api import fetch_player_by_nick
 
 # is_subscribed implementation (uses bot)
 async def is_subscribed(id: int) -> bool:
@@ -210,35 +209,9 @@ async def auto_reply(message: types.Message):
         try:
             # Получаем RAG контекст (если включён)
             if config.RAG_ENABLED:
-                rag_ctx = await rag.build_context(message.text, k=6, max_chars=2000)
+                rag_ctx = await rag.build_full_context(message.text, username)
         except Exception:
             logging.exception("RAG: failed to build context")
-
-        # --- NEW: fetch player info from майнбридж API (mb_api.fetch_player_by_nick)
-        player_ctx = ""
-        try:
-            player_info = await fetch_player_by_nick(username)
-            if player_info:
-                # краткое pretty-print (ограничим длину)
-                player_ctx = "Информация об игроке (источник: майнбридж.рф):\n" + player_info
-                # Включаем player_ctx в rag_ctx (модель увидит эти данные вместе с KB выдержками)
-                if rag_ctx:
-                    rag_ctx = player_ctx + "\n\n" + rag_ctx
-                else:
-                    rag_ctx = player_ctx
-        except Exception:
-            logging.exception("mb_api: failed to fetch player info")
-
-        server_ctx = ""
-        try:
-            payload = await mc.fetch_status()
-            server_ctx = mc.format_status_text(payload)
-            if rag_ctx:
-                rag_ctx = server_ctx + "\n\n" + rag_ctx
-            else:
-                rag_ctx = server_ctx
-        except Exception as e:
-            logging.exception("mc: failed to fetch server status")
 
         # call OpenAI (non-stream). Keep as in original file
         answer = await handlers_helpers.complete_openai_nostream(
@@ -250,7 +223,6 @@ async def auto_reply(message: types.Message):
         )
 
         await msgs.long_text(msg, message, answer)
-
     except Exception as e:
         logging.exception("Ошибка в auto_reply")
         try:

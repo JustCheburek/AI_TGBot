@@ -94,39 +94,53 @@ async def fetch_player_by_nick(nick: str, use_cache: bool = True) -> Optional[st
         return None
     key = f"mb:{nick.lower()}"
     if use_cache:
-        cached = _get_cache(key)
-        if cached is not None:
+        player = _get_cache(key)
+        if player is not None:
             # cached — dict или None; сериализуем как строку перед возвратом
             try:
-                player_info = json.dumps(cached, ensure_ascii=False, indent=2)
-                if len(player_info) > _MAX_PLAYER_CHARS:
-                    player_info = player_info[:_MAX_PLAYER_CHARS] + "\n... (truncated)"
-                return player_info
+                return player
             except Exception:
                 # если по какой-то причине сериализация упала, просто вернём None
                 logger.exception("mb_api: failed to json.dumps cached value for %s", nick)
                 return None
 
-    data = await _fetch_json_from_api(nick)
-    if use_cache:
-        # сохраняем в кэш original dict (может быть None)
-        _set_cache(key, data)
+    player_data = await _fetch_json_from_api(nick)
 
-    if data is None:
+    if player_data is None:
         return None
 
-    # data — dict, поэтому используем ключи словаря
+    URLS_START = {
+        "vk": { "url": 'https://vk.com/', "label": 'ВК' },
+        "twitch": { "url": 'https://www.twitch.tv/', "label": 'Твич' },
+        "youtube": { "url": 'https://youtube.com/@', "label": 'Ютуб' },
+        "donationAlerts": { "url": 'https://donationalerts.com/r/', "label": 'Донат' }
+    }
+    
     try:
-        del data["invites"]
-        del data["punishments"]
-        del data["casesPurchases"]
+        player = {
+            "Звёзды (рейтинг)": player_data.get("rating2") or 0,
+            "Погасшие звёзды (скидок)": player_data.get("faded_rating") or 0,
+            "Наигранные часы": player_data.get("hours") or 0,
+            "Был онлайн на сайте": player_data.get("onlineAt") or "N/A",
+            "Мостики": player_data.get("mostiki") or 0,
+            "Проходка на дней": player_data.get("days") or 0,
+            "Аккаунт создан": player_data.get("createdAt") or "N/A",
+        }
+        
+        if player_data["discordId"]:
+            player["Дискорд"] = f"https://discord.com/users/{player_data['discordId']}"
+
+        for key, val in player_data.get("urls", {}).items():
+            if key in URLS_START and val:
+                if player_data["urls"][key]:
+                    player[URLS_START[key]["label"]] = f"{URLS_START[key]['url']}{val}"
+                
+        if use_cache:
+            _set_cache(key, player)
+        
+        return json.dumps(player, ensure_ascii=False)
+        
     except Exception:
-        # на случай, если data не тот тип — логируем и продолжаем
-        logger.exception("mb_api: unexpected data type for nick %s: %r", nick, type(data))
-
-    player_info = json.dumps(data, ensure_ascii=False, indent=2)
-
-    if len(player_info) > _MAX_PLAYER_CHARS:
-        player_info = player_info[:_MAX_PLAYER_CHARS] + "\n... (truncated)"
-
-    return player_info
+        logger.exception("mb_api: unexpected error processing data for %s", nick)
+        return None
+    

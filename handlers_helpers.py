@@ -65,6 +65,7 @@ async def complete_openai_nostream(user_text: str, name: str, conv_key: HistoryK
                 temperature=1,
             )
             text = (resp.choices[0].message.content or "").strip()
+            text = utils.remove_br(text)
             if text:
                 utils.remember_assistant(conv_key, text)
             return text
