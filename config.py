@@ -21,6 +21,7 @@ MC_SERVER_PORT = int(os.getenv("MC_SERVER_PORT", "25565"))
 BASE_DIR = Path(__file__).resolve().parent
 KB_DIR = Path(__file__).resolve().parent / "kb"          # положите сюда .txt/.md файлы
 RAG_INDEX_DIR = Path(__file__).resolve().parent / ".rag_cache"
+PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 RAG_ENABLED = True
 RAG_CHUNK_SIZE = 900
 RAG_CHUNK_OVERLAP = 150
@@ -33,6 +34,7 @@ MAX_HISTORY_MESSAGES = 5
 MC_CACHE_TTL = 20
 MAX_OPENAI_RETRIES = 2
 OPENAI_BACKOFF_BASE = 1.5
+FREEZE_OPTIONS = (1, 2, 3, 4)
 
 # sanity checks
 if not BOT_TOKEN:

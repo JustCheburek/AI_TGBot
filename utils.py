@@ -6,6 +6,9 @@ import asyncio
 from pathlib import Path
 from typing import Tuple, Deque, Dict, List
 from collections import defaultdict, deque
+import time
+from datetime import datetime
+from typing import Dict, Optional
 
 from aiogram import types
 from aiogram.enums import ChatType, ParseMode
@@ -68,7 +71,6 @@ def split_chunks(text: str, size: int, ov: int) -> list[str]:
     return [c for c in out if c.strip()]
 
 # system prompt loader
-PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 _PROMPT_CACHE: dict = {}
 
 def _read_txt_prompt(path: Path) -> str:
@@ -87,10 +89,10 @@ def _read_txt_prompt(path: Path) -> str:
 def load_system_prompt_for_chat(chat: types.Chat) -> str:
     try:
         if chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
-            group_path = PROMPTS_DIR / f"{chat.id}.txt"
+            group_path = config.PROMPTS_DIR / f"{chat.id}.txt"
             if group_path.exists():
                 return _read_txt_prompt(group_path)
-        default_path = PROMPTS_DIR / "default.txt"
+        default_path = config.PROMPTS_DIR / "default.txt"
         return _read_txt_prompt(default_path)
     except FileNotFoundError:
         logging.warning("Prompt .txt file not found; using builtin fallback")
@@ -196,4 +198,34 @@ def should_answer(message: types.Message, bot_username: str) -> bool:
     if len(text) >= 25:
         score += 1
     return score >= 4
+
+_USER_FREEZES: Dict[int, float] = {}
+
+def _cleanup_freezes(now: Optional[float] = None) -> None:
+    if now is None:
+        now = time.time()
+    expired = [uid for uid, ts in _USER_FREEZES.items() if ts <= now]
+    for uid in expired:
+        _USER_FREEZES.pop(uid, None)
+
+def set_user_freeze(user_id: int, hours: int) -> float:
+    expires_at = time.time() + hours * 3600
+    _USER_FREEZES[user_id] = expires_at
+    return expires_at
+
+def get_user_freeze(user_id: int) -> Optional[float]:
+    _cleanup_freezes()
+    expires_at = _USER_FREEZES.get(user_id)
+    if expires_at is None:
+        return None
+    if expires_at <= time.time():
+        _USER_FREEZES.pop(user_id, None)
+        return None
+    return expires_at
+
+def is_user_frozen(user_id: int) -> bool:
+    return get_user_freeze(user_id) is not None
+
+def format_freeze_until(ts: float) -> str:
+    return datetime.fromtimestamp(ts).strftime('%d.%m %H:%M')
 

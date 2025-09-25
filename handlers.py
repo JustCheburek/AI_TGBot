@@ -1,9 +1,5 @@
 # handlers.py
 import logging
-import json  # <-- добавлено для форматирования player_info
-import time
-from datetime import datetime
-from typing import Dict, Optional
 
 from aiogram import types
 from aiogram.filters import Command
@@ -15,37 +11,6 @@ import mc
 import rag
 import handlers_helpers
 from mb_api import fetch_player_by_nick
-
-FREEZE_OPTIONS = (1, 2, 3, 4)
-_USER_FREEZES: Dict[int, float] = {}
-
-def _cleanup_freezes(now: Optional[float] = None) -> None:
-    if now is None:
-        now = time.time()
-    expired = [uid for uid, ts in _USER_FREEZES.items() if ts <= now]
-    for uid in expired:
-        _USER_FREEZES.pop(uid, None)
-
-def set_user_freeze(user_id: int, hours: int) -> float:
-    expires_at = time.time() + hours * 3600
-    _USER_FREEZES[user_id] = expires_at
-    return expires_at
-
-def get_user_freeze(user_id: int) -> Optional[float]:
-    _cleanup_freezes()
-    expires_at = _USER_FREEZES.get(user_id)
-    if expires_at is None:
-        return None
-    if expires_at <= time.time():
-        _USER_FREEZES.pop(user_id, None)
-        return None
-    return expires_at
-
-def is_user_frozen(user_id: int) -> bool:
-    return get_user_freeze(user_id) is not None
-
-def format_freeze_until(ts: float) -> str:
-    return datetime.fromtimestamp(ts).strftime('%d.%m %H:%M')
 
 # is_subscribed implementation (uses bot)
 async def is_subscribed(user_id: int) -> bool:
@@ -64,7 +29,7 @@ async def cmd_freeze(message: types.Message):
     id = message.from_user.id
     buttons = []
 
-    for hours in FREEZE_OPTIONS:
+    for hours in config.FREEZE_OPTIONS:
         title = "1 час" if hours == 1 else f"{hours} часа"
         callback = f"freeze:{id}:{hours}"
         buttons.append(types.InlineKeyboardButton(text=title, callback_data=callback))
@@ -72,10 +37,12 @@ async def cmd_freeze(message: types.Message):
     rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=rows)
 
-    current_freeze = get_user_freeze(id)
+    current_freeze = utils.get_user_freeze(id)
 
-    text_body = f"Выбери длительность заморозки автоответов" + \
-        current_freeze if "\nТекущая заморозка действует до {format_freeze_until(current_freeze)}" else ""
+    if current_freeze:
+        current_freeze = f"\nТекущая заморозка действует до {utils.format_freeze_until(current_freeze)}"
+
+    text_body = f"Выбери длительность заморозки автоответов" + current_freeze
 
     await message.reply(text_body, reply_markup=keyboard)
 
@@ -142,12 +109,12 @@ async def callback_any(query: types.CallbackQuery):
         except ValueError:
             await query.answer("Недопустимые параметры", show_alert=True)
             return
-        if hours not in FREEZE_OPTIONS:
+        if hours not in config.FREEZE_OPTIONS:
             await query.answer("Недопустимая длительность", show_alert=True)
             return
 
-        expires_at = set_user_freeze(target_id, hours)
-        until_text = format_freeze_until(expires_at)
+        expires_at = utils.set_user_freeze(target_id, hours)
+        until_text = utils.format_freeze_until(expires_at)
         try:
             if query.message:
                 await query.message.edit_text(f"Автоответы заморожены до {until_text}.")
@@ -177,7 +144,7 @@ async def auto_reply(message: types.Message):
         await message.reply("Подпишитесь на @MineBridgeOfficial, чтобы пользоваться ботом.")
         return
 
-    if is_user_frozen(user_id):
+    if utils.is_user_frozen(user_id):
         logging.info("Auto replies are temporarily frozen for user %s", user_id)
         return
 
