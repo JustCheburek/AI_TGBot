@@ -171,10 +171,12 @@ async def auto_reply(message: types.Message):
     id = message.from_user.id
     if not await is_subscribed(id) and id != 1087968824:
         await message.reply("Подпишитесь на @MineBridgeOfficial, чтобы пользоваться ботом")
+        utils.save_incoming_message(message)
         return
     
     if utils.is_user_frozen(id):
         logging.info("Auto replies are temporarily frozen for user %s", id)
+        utils.save_incoming_message(message)
         return
 
     # robust chat type handling (works for aiogram returning enum or string)
