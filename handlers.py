@@ -143,6 +143,8 @@ async def callback_any(query: types.CallbackQuery):
             return
 
         id = query.from_user.id
+        utils.clear_user_freeze(id)
+        
         try:
             if query.message:
                 await query.message.edit_text(
