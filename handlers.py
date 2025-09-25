@@ -1,6 +1,7 @@
 # handlers.py
 import logging
 import time
+import re
 
 from aiogram import types
 from aiogram.filters import Command
@@ -11,16 +12,27 @@ import utils
 import mc
 import rag
 import handlers_helpers
+import msgs
 from mb_api import fetch_player_by_nick
 
 # is_subscribed implementation (uses bot)
-async def is_subscribed(user_id: int) -> bool:
+async def is_subscribed(id: int) -> bool:
     try:
-        member = await bot.get_chat_member(chat_id=config.CHANNEL, user_id=user_id)
+        member = await bot.get_chat_member(chat_id=config.CHANNEL, user_id=id)
         return member.status in ("creator", "administrator", "member", "restricted")
     except Exception:
         logging.exception("Error checking subscription")
         return False
+
+def _build_freeze_keyboard(id: int, hot: bool = True) -> types.InlineKeyboardMarkup:
+    buttons = [
+        types.InlineKeyboardButton(text=utils.get_hour_string(hours), callback_data=f"freeze:{id}:{hours}")
+        for hours in config.FREEZE_OPTIONS
+    ]
+    rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+    if hot:
+        rows.append([types.InlineKeyboardButton(text="🔥 Разморозка 🔥", callback_data=f"unfreeze:{id}")])
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
 @dp.message(Command("freeze"))
 async def cmd_freeze(message: types.Message):
@@ -28,33 +40,25 @@ async def cmd_freeze(message: types.Message):
         return
 
     id = message.from_user.id
-    buttons = []
-
-    for hours in config.FREEZE_OPTIONS:
-        callback = f"freeze:{id}:{hours}"
-        buttons.append(types.InlineKeyboardButton(text=utils.get_hour_string(hours), callback_data=callback))
-
-    rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
-    keyboard = types.InlineKeyboardMarkup(inline_keyboard=rows)
 
     current_freeze = utils.get_user_freeze(id)
     if current_freeze:
         minites_unfreeze = round((current_freeze - time.time()) / 60)
-        current_freeze = f"\n⏳ Текущая заморозка действует ещё **{minites_unfreeze} мин**"
+        current_freeze = f"\n⏳ Текущая заморозка действует ещё <b>{minites_unfreeze} мин</b>"
     else:
         current_freeze = ""
 
-    text_body = f"❄️ Выбери *длительность заморозки автоответов*" + current_freeze
+    text_body = f"❄️ Выбери <b>длительность заморозки автоответов</b>" + current_freeze
 
-    await message.reply(text_body, reply_markup=keyboard)
+    await message.reply(text_body, reply_markup=_build_freeze_keyboard(id, hot=bool(current_freeze)))
 
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    user_id = message.from_user.id
+    id = message.from_user.id
     username = (message.from_user.username or f"{message.from_user.first_name}")
-    if await is_subscribed(user_id):
-        await message.answer(f"Привет, @{username}! Можешь писать мне свои вопросы. Обращайся ко мне - нейробот или бот")
+    if await is_subscribed(id):
+        await message.reply(f"Привет, @{username}!\nМожешь писать мне свои вопросы\nОбращайся ко мне - нейробот или бот")
         return
 
     kb = types.InlineKeyboardMarkup(inline_keyboard=[
@@ -62,34 +66,34 @@ async def cmd_start(message: types.Message):
         [types.InlineKeyboardButton(text="Проверить подписку", callback_data="check_subscription")]
     ])
     await message.answer(
-        "Для доступа нужен канал @MineBridgeOfficial — подпишитесь и нажмите «*Проверить подписку*».",
+        "Для доступа нужен канал @MineBridgeOfficial — подпишитесь и нажмите «<b>Проверить подписку</b>»",
         reply_markup=kb
     )
 
 @dp.message(Command("status"))
 async def cmd_status(message: types.Message):
-    sent = await message.reply("🔎 Проверяю статус сервера...")
+    msg = await message.reply("🔎 Проверяю статус сервера...")
     try:
-        payload = await mc.fetch_status(config.MC_SERVER_HOST, config.MC_SERVER_PORT)
-        text = mc.format_status_text(config.MC_SERVER_HOST, config.MC_SERVER_PORT, payload)
-        await utils.safe_edit_to(sent, text)
+        payload = await mc.fetch_status()
+        text = mc.format_status_text(payload)
+        await msg.edit_text(text)
     except Exception as e:
-        await utils.safe_edit_to(sent, f"⚠️ Не удалось получить статус: `{utils._shorten(str(e), 300)}`")
+        await msg.edit_text(f"⚠️ Не удалось получить статус: `{utils._shorten(str(e), 300)}`")
 
 @dp.message(Command("rag_reindex"))
 async def cmd_rag_reindex(message: types.Message):
     if not config.RAG_ENABLED:
-        await message.reply("RAG отключён.")
+        await message.reply("RAG отключён")
         return
-    sent_msg = await message.reply("🔄 Перестраиваю индекс...")
+    msg = await message.reply("🔄 <b>Перестраиваю индекс</b>...")
     try:
         global RAG_CHUNKS
         rag.RAG_LOADED = False
         await rag._ensure_rag_index()
-        await utils.safe_edit_to(sent_msg, f"✅ Готово. Чанков: {len(rag.RAG_CHUNKS)}")
+        await msg.edit_text(f"✅ <b>Готово</b>\nЧанков: {len(rag.RAG_CHUNKS)}")
     except Exception as e:
         logging.exception("RAG reindex error")
-        await utils.safe_edit_to(sent_msg, f"⚠️ Ошибка перестройки: {e}")
+        await msg.edit_text(f"⚠️ Ошибка перестройки: {e}")
 
 
 @dp.callback_query()
@@ -100,11 +104,11 @@ async def callback_any(query: types.CallbackQuery):
     if data.startswith("freeze:"):
         parts = data.split(":")
         if len(parts) != 3:
-            await query.answer("Не удалось применить заморозку.", show_alert=True)
+            await query.answer("Не удалось заморозить", show_alert=True)
             return
         _, id, hours = parts
         if id != str(query.from_user.id):
-            await query.answer("Это меню предназначено для другого игрока", show_alert=True)
+            await query.answer("Не твоё сообщение!", show_alert=True)
             return
         try:
             id = int(id)
@@ -116,13 +120,39 @@ async def callback_any(query: types.CallbackQuery):
             await query.answer("Недопустимая длительность", show_alert=True)
             return
 
+        id = query.from_user.id
         utils.set_user_freeze(id, hours)
         try:
             if query.message:
-                await query.message.edit_text(f"❄️ Автоответы заморожены для *{username}* на *{utils.get_hour_string(hours)}*")
+                await query.message.edit_text(
+                    f"🔐 Авто-ответы <b>выключены</b> для <b>{username}</b> на <b>{utils.get_hour_string(hours)}</b>",
+                    reply_markup=_build_freeze_keyboard(id),
+                )
         except Exception:
             logging.exception("freeze: failed to edit confirmation message")
-        await query.answer("Готово")
+        await query.answer(f"🔐 Авто-ответы <b>выключены</b> для <b>{username}</b> на <b>{utils.get_hour_string(hours)}</b>")
+        return
+
+    if data.startswith("unfreeze:"):
+        parts = data.split(":")
+        if len(parts) != 2:
+            await query.answer("Не удалось разморозить", show_alert=True)
+            return
+        _, id = parts
+        if id != str(query.from_user.id):
+            await query.answer("Это не твоё сообщение!", show_alert=True)
+            return
+
+        id = query.from_user.id
+        try:
+            if query.message:
+                await query.message.edit_text(
+                    f"🔑 Авто-ответы <b>включены</b> для <b>{username}</b>",
+                    reply_markup=_build_freeze_keyboard(id, hot=False),
+                )
+        except Exception:
+            logging.exception("unfreeze: failed to edit confirmation message")
+        await query.answer(f"🔑 Авто-ответы <b>включены</b> для <b>{username}</b>")
         return
 
     if data != "check_subscription":
@@ -130,24 +160,22 @@ async def callback_any(query: types.CallbackQuery):
         return
 
     if await is_subscribed(query.from_user.id):
-        username = (query.message.from_user.username or f"{query.message.from_user.first_name}")
-        await query.message.answer(f"Привет, @{username}! Можешь писать мне свои вопросы. Обращайся ко мне - нейробот или бот")
-        await query.answer()
+        await query.message.reply(f"Привет, @{username}!\nМожешь писать мне свои вопросы\nОбращайся ко мне - нейробот или бот")
     else:
-        await query.answer("Подписка не найдена. Убедитесь, что подписаны на канал.", show_alert=True)
+        await query.message.reply("Подписка не найдена! Убедитесь, что подписаны на канал", show_alert=True)
 
 @dp.message()
 async def auto_reply(message: types.Message):
     if not message.text:
         return
     
-    user_id = message.from_user.id
-    if not await is_subscribed(user_id) and user_id != 1087968824:
-        await message.reply("Подпишитесь на @MineBridgeOfficial, чтобы пользоваться ботом.")
+    id = message.from_user.id
+    if not await is_subscribed(id) and id != 1087968824:
+        await message.reply("Подпишитесь на @MineBridgeOfficial, чтобы пользоваться ботом")
         return
 
-    if utils.is_user_frozen(user_id):
-        logging.info("Auto replies are temporarily frozen for user %s", user_id)
+    if utils.is_user_frozen(id):
+        logging.info("Auto replies are temporarily frozen for user %s", id)
         return
 
     # robust chat type handling (works for aiogram returning enum or string)
@@ -160,7 +188,7 @@ async def auto_reply(message: types.Message):
     is_group = ct_name in ("GROUP", "SUPERGROUP")
 
     if is_group and not utils.should_answer(message, bot_username):
-        logging.info("Пропущено сообщение без упоминания бота или ответа на бота (группа).")
+        logging.info("Пропущено сообщение без упоминания бота или ответа на бота (группа)")
         return
 
     try:
@@ -169,13 +197,14 @@ async def auto_reply(message: types.Message):
         except Exception:
             pass
 
-        sent_msg = await message.reply("⏳ *Печатаю...*")
+        msg = await message.reply("⏳ <b>Печатаю...</b>")
 
         username = (message.from_user.username or f"{message.from_user.first_name}")
         conv_key = utils.make_key(message)
 
         sys_prompt = utils.load_system_prompt_for_chat(message.chat)
-        sys_prompt += "\n\nВАЖНО: В ответе не показывай служебные индексы источников (вида [xxxxxxxxxx:0] или 0d829391f3:0)."
+        sys_prompt += "\n\nИспользуй HTML-разметку для форматирования ответа. Все ссылки вставляй сразу в текст.\n"
+        sys_prompt += "ВАЖНО: В ответе не показывай служебные индексы источников (вида [xxxxxxxxxx:0] или 0d829391f3:0)"
 
         rag_ctx = ""
         try:
@@ -202,8 +231,8 @@ async def auto_reply(message: types.Message):
 
         server_ctx = ""
         try:
-            payload = await mc.fetch_status(config.MC_SERVER_HOST, config.MC_SERVER_PORT)
-            server_ctx = mc.format_status_text(config.MC_SERVER_HOST, config.MC_SERVER_PORT, payload)
+            payload = await mc.fetch_status()
+            server_ctx = mc.format_status_text(payload)
             if rag_ctx:
                 rag_ctx = server_ctx + "\n\n" + rag_ctx
             else:
@@ -220,11 +249,11 @@ async def auto_reply(message: types.Message):
             rag_ctx=rag_ctx,
         )
 
-        await utils.send_long_text(sent_msg, message, answer)
+        await msgs.long_text(msg, message, answer)
 
     except Exception as e:
         logging.exception("Ошибка в auto_reply")
         try:
-            await utils.safe_edit_to(sent_msg, f"*Что-то пошло не так* ⚠️\n{str(e)}")
+            await msg.edit_text(f"<b>Что-то пошло не так</b> ⚠️\n{str(e)}")
         except Exception:
             pass

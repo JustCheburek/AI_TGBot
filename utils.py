@@ -2,17 +2,14 @@
 import re
 import hashlib
 import logging
-import asyncio
 from pathlib import Path
 from typing import Tuple, Deque, Dict, List
 from collections import defaultdict, deque
 import time
-from datetime import datetime
 from typing import Dict, Optional
 
 from aiogram import types
-from aiogram.enums import ChatType, ParseMode
-from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest, TelegramRetryAfter
+from aiogram.enums import ChatType
 
 import config
 from bot_init import *
@@ -100,66 +97,6 @@ def load_system_prompt_for_chat(chat: types.Chat) -> str:
         logging.exception("Failed to load .txt prompt: %s", e)
     return "Пиши что я сегодня не смогу помочь, мой системный промт сломался."
 
-# helpers for safe telegram edits/sends
-async def safe_edit_to(msg: types.Message, text: str, markdown: bool = True) -> bool:
-    max_attempts = 4
-    attempt = 0
-    backoff = 1.0
-    while True:
-        try:
-            await msg.edit_text(text, parse_mode=(ParseMode.MARKDOWN if markdown else None))
-            return True
-        except TelegramRetryAfter as e:
-            attempt += 1
-            wait = getattr(e, "retry_after", backoff)
-            await asyncio.sleep(wait)
-            backoff *= 2
-            if attempt >= max_attempts:
-                return False
-        except TelegramBadRequest as e:
-            if markdown and "can't parse entities" in str(e).lower():
-                markdown = False
-                continue
-            logging.exception("Telegram edit error (bad request): %s", e)
-            return False
-        except TelegramForbiddenError as e:
-            logging.exception("Telegram edit forbidden: %s", e)
-            return False
-        except Exception:
-            logging.exception("Unexpected error while editing message")
-            return False
-
-async def safe_send_reply(base_message: types.Message, text: str):
-    max_attempts = 4
-    attempt = 0
-    backoff = 1.0
-    while True:
-        try:
-            return await base_message.reply(text, parse_mode=ParseMode.MARKDOWN)
-        except TelegramRetryAfter as e:
-            attempt += 1
-            wait = getattr(e, "retry_after", backoff)
-            await asyncio.sleep(wait)
-            backoff *= 2
-            if attempt >= max_attempts:
-                return None
-        except (TelegramForbiddenError, TelegramBadRequest) as e:
-            logging.exception("Telegram send error: %s", e)
-            return None
-        except Exception:
-            logging.exception("Unexpected error while sending message")
-            return None
-
-async def send_long_text(initial_msg: types.Message, base_message: types.Message, text: str):
-    CHUNK = 4000
-    if not text:
-        await safe_edit_to(initial_msg, "*Не удалось получить ответ — попробуйте позже*")
-        return
-    parts = [text[i:i+CHUNK] for i in range(0, len(text), CHUNK)] or ["..."]
-    await safe_edit_to(initial_msg, parts[0])
-    for part in parts[1:]:
-        await safe_send_reply(base_message, part)
-
 def should_answer(message: types.Message, bot_username: str) -> bool:
     text = (message.text or "").strip()
     if message.reply_to_message and message.reply_to_message.from_user and message.reply_to_message.from_user.is_bot:
@@ -212,6 +149,9 @@ def set_user_freeze(user_id: int, hours: int) -> float:
     expires_at = time.time() + hours * 3600
     _USER_FREEZES[user_id] = expires_at
     return expires_at
+
+def clear_user_freeze(user_id: int) -> bool:
+    return _USER_FREEZES.pop(user_id, None) is not None
 
 def get_user_freeze(user_id: int) -> Optional[float]:
     _cleanup_freezes()

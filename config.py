@@ -15,7 +15,6 @@ CHANNEL = os.getenv("CHANNEL", "@MineBridgeOfficial")
 
 # Minecraft
 MC_SERVER_HOST = os.getenv("MC_SERVER_HOST")
-MC_SERVER_PORT = int(os.getenv("MC_SERVER_PORT", "25565"))
 
 # RAG
 BASE_DIR = Path(__file__).resolve().parent
@@ -42,4 +41,4 @@ if not BOT_TOKEN:
 if not OPENAI_API_KEY:
     raise SystemExit("Set OPENAI_API_KEY in .env")
 if not MC_SERVER_HOST:
-    raise SystemExit("Set MC_SERVER_HOST (and optionally MC_SERVER_PORT) in .env")
+    raise SystemExit("Set MC_SERVER_HOST in .env")
