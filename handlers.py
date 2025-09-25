@@ -61,52 +61,21 @@ async def cmd_freeze(message: types.Message):
     if not message.from_user:
         return
 
-    target_user = None
-    target_id: Optional[int] = None
-
-    if message.reply_to_message and message.reply_to_message.from_user:
-        target_user = message.reply_to_message.from_user
-        target_id = target_user.id
-    else:
-        parts = (message.text or "").split()
-        if len(parts) >= 2:
-            try:
-                target_id = int(parts[1])
-            except ValueError:
-                target_id = None
-
-    if target_id is None:
-        await message.reply("\u0423\u043a\u0430\u0436\u0438 ID \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f \u0438\u043b\u0438 \u043e\u0442\u0432\u0435\u0442\u044c \u043d\u0430 \u0435\u0433\u043e \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435 \u043a\u043e\u043c\u0430\u043d\u0434\u043e\u0439 /freeze.")
-        return
-
-    label_parts = []
-    if target_user:
-        full_name = getattr(target_user, "full_name", None)
-        if full_name:
-            label_parts.append(full_name)
-        username = getattr(target_user, "username", None)
-        if username:
-            label_parts.append(f"@{username}")
-    target_label = " ".join(p for p in label_parts if p) or f"ID {target_id}"
-
-    display = f"{target_label} (ID {target_id})" if target_label != f"ID {target_id}" else target_label
-
-    initiator_id = message.from_user.id
+    id = message.from_user.id
     buttons = []
+
     for hours in FREEZE_OPTIONS:
-        title = "1 \u0447\u0430\u0441" if hours == 1 else f"{hours} \u0447\u0430\u0441\u0430"
-        callback = f"freeze:{target_id}:{hours}:{initiator_id}"
+        title = "1 час" if hours == 1 else f"{hours} часа"
+        callback = f"freeze:{id}:{hours}"
         buttons.append(types.InlineKeyboardButton(text=title, callback_data=callback))
 
     rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=rows)
 
-    current_freeze = get_user_freeze(target_id)
-    status_line = ""
-    if current_freeze:
-        status_line = f"\n\u0422\u0435\u043a\u0443\u0449\u0430\u044f \u0437\u0430\043c\u043e\0440\u043e\0437\u043a\u0430 \u0434\u0435\u0439\u0441\u0442\u0432\u0443\u0435\u0442 \u0434\u043e {format_freeze_until(current_freeze)}."
+    current_freeze = get_user_freeze(id)
 
-    text_body = f"\u0412\u044b\u0431\u0435\u0440\u0438 \u0434\u043b\u0438\u0442\u0435\u043b\u044c\u043d\u043e\u0441\u0442\u044c \u0437\u0430\043c\u043e\0440\u043e\0437\u043a\0438 \u0430\u0432\u0442\u043e\043e\0442\0432\0435\0442\043e\0432 \u0434\u043b\u044f \u043f\u043e\043b\044c\0437\043e\0432\0430\0442\0435\043b\044f {display}." + status_line
+    text_body = f"Выбери длительность заморозки автоответов" + \
+        current_freeze if "\nТекущая заморозка действует до {format_freeze_until(current_freeze)}" else ""
 
     await message.reply(text_body, reply_markup=keyboard)
 
@@ -165,23 +134,23 @@ async def callback_any(query: types.CallbackQuery):
             return
         _, target_id_str, hours_str, initiator_str = parts
         if initiator_str != str(query.from_user.id):
-            await query.answer("Это меню предназначено для другого модератора.", show_alert=True)
+            await query.answer("Это меню предназначено для другого игрока", show_alert=True)
             return
         try:
             target_id = int(target_id_str)
             hours = int(hours_str)
         except ValueError:
-            await query.answer("Недопустимые параметры.", show_alert=True)
+            await query.answer("Недопустимые параметры", show_alert=True)
             return
         if hours not in FREEZE_OPTIONS:
-            await query.answer("Недопустимая длительность.", show_alert=True)
+            await query.answer("Недопустимая длительность", show_alert=True)
             return
 
         expires_at = set_user_freeze(target_id, hours)
         until_text = format_freeze_until(expires_at)
         try:
             if query.message:
-                await query.message.edit_text(f"Автоответы заморожены для ID {target_id} до {until_text}.")
+                await query.message.edit_text(f"Автоответы заморожены до {until_text}.")
         except Exception:
             logging.exception("freeze: failed to edit confirmation message")
         await query.answer("Готово")
