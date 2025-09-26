@@ -190,8 +190,13 @@ def load_system_prompt_for_chat(chat: types.Chat) -> str:
 
 def should_answer(message: types.Message, bot_username: str) -> bool:
     text = (message.text or "").strip()
+    # If this is a reply, only react when replying to OUR bot
     if message.reply_to_message and message.reply_to_message.from_user and message.reply_to_message.from_user.is_bot:
-        return True
+        replied_username = (getattr(message.reply_to_message.from_user, "username", "") or "").lower()
+        if replied_username == (bot_username or "").lower():
+            return True
+        # Reply to a different bot — do not trigger autoreply
+        return False
     if message.entities and text:
         for entity in message.entities:
             if entity.type == "mention":

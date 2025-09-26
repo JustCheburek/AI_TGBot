@@ -170,13 +170,8 @@ async def auto_reply(message: types.Message):
     if not message.text:
         return
     
-    id = message.from_user.id
-    if not await is_subscribed(id) and id != 1087968824:
-        await message.reply("Подпишитесь на @MineBridgeOfficial, чтобы пользоваться ботом")
-        utils.save_incoming_message(message)
-        return
-    
-    if utils.is_user_frozen(id):
+    id = getattr(message.from_user, "id", None)
+    if id is not None and utils.is_user_frozen(id):
         logging.info("Auto replies are temporarily frozen for user %s", id)
         utils.save_incoming_message(message)
         return
@@ -192,6 +187,12 @@ async def auto_reply(message: types.Message):
 
     if is_group and not utils.should_answer(message, bot_username):
         logging.info("Пропущено (но сохранено) сообщение без упоминания бота или ответа на бота (группа)")
+        utils.save_incoming_message(message)
+        return
+    
+    id = message.from_user.id
+    if not await is_subscribed(id) and id != 1087968824:
+        await message.reply("Подпишитесь на @MineBridgeOfficial, чтобы пользоваться ботом")
         utils.save_incoming_message(message)
         return
 
