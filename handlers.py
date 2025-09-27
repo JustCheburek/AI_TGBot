@@ -10,6 +10,7 @@ from bot_init import *
 import config
 import utils
 import mc
+import mb_api
 import rag
 import handlers_helpers
 import msgs
@@ -165,6 +166,42 @@ async def callback_any(query: types.CallbackQuery):
     else:
         await query.message.reply("Подписка не найдена! Убедитесь, что подписаны на канал", show_alert=True)
 
+@dp.message(Command("player"))
+async def cmd_player(message: types.Message):
+    """/player [nick] — получить данные игрока из MineBridge API.
+    Если ник не указан, пробуем использовать Telegram @username отправителя."""
+    id = message.from_user.id
+    if not await is_subscribed(id):
+        await message.reply("Подпишитесь на @MineBridgeOfficial, чтобы пользоваться ботом")
+        utils.save_incoming_message(message)
+        return
+    
+    text = (message.text or "").strip()
+    nick = ""
+    try:
+        parts = text.split(maxsplit=1)
+        if len(parts) > 1:
+            nick = parts[1].strip()
+    except Exception:
+        pass
+
+    if not nick:
+        nick = (getattr(message.from_user, "username", None) or "").strip()
+
+    if not nick:
+        await message.reply("Укажи ник: <code>/player [ник]</code>. Не удалось определить твой ник по @username.")
+        return
+
+    msg = await message.reply("🔎 Проверяю игрока...")
+    try:
+        data_json = await mb_api.fetch_player_by_nick(nick)
+        if not data_json:
+            await msg.edit_text(f"😕 Игрок <code>{nick}</code> не найден или произошла ошибка API.")
+            return
+        await msg.edit_text(f"<b>Игрок</b> <code>{nick}</code>:\n<code>{data_json}</code>")
+    except Exception as e:
+        await msg.edit_text(f"❌ Ошибка при запросе: {utils._shorten(str(e), 300)}")
+
 @dp.message()
 async def auto_reply(message: types.Message):
     if not message.text:
@@ -191,7 +228,7 @@ async def auto_reply(message: types.Message):
         return
     
     id = message.from_user.id
-    if not await is_subscribed(id) and id != 1087968824:
+    if not await is_subscribed(id):
         await message.reply("Подпишитесь на @MineBridgeOfficial, чтобы пользоваться ботом")
         utils.save_incoming_message(message)
         return
@@ -208,8 +245,7 @@ async def auto_reply(message: types.Message):
         conv_key = utils.make_key(message)
 
         sys_prompt = utils.load_system_prompt_for_chat(message.chat)
-        sys_prompt += "\n\nВажно: Используй HTML-разметку для форматирования ответа. MarkDown НЕЛЬЗЯ! Все ссылки вставляй сразу в текст.\n"
-        sys_prompt += "ВАЖНО: В ответе не показывай служебные индексы источников (вида [xxxxxxxxxx:0] или 0d829391f3:0)"
+        sys_prompt += "\n\nВажно: Используй HTML-разметку для форматирования ответа (<b>, <i>, <code>). MarkDown НЕЛЬЗЯ! Все ссылки вставляй сразу в текст <a href=""></a>"
 
         rag_ctx = ""
         try:

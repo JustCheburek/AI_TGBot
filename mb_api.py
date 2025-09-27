@@ -13,10 +13,7 @@ _MB_CACHE: Dict[str, tuple[float, Optional[Dict[str, Any]]]] = {}
 _MB_CACHE_TTL = 20.0  # seconds, настраиваемо
 
 # параметры повторов/таймаутов (подобно mc.py)
-_MAX_RETRIES = 2
-_BACKOFF_BASE = 1.5
 _HTTP_TIMEOUT = 10.0
-_MAX_PLAYER_CHARS = 2000
 
 logger = logging.getLogger(__name__)
 
@@ -34,37 +31,24 @@ async def _fetch_json_from_api(nick: str) -> Optional[Dict[str, Any]]:
     nick_esc = quote_plus(nick, safe="")  # экранируем ник в URL
     url = f"https://{host}/api/name/{nick_esc}"
 
-    attempt = 0
-    while True:
-        try:
-            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-                r = await client.get(url)
-                r.raise_for_status()
-                try:
-                    return r.json()
-                except Exception:
-                    # Если не JSON — логируем и возвращаем None
-                    logger.exception("mb_api: failed to parse JSON for nick %s", nick)
-                    return None
-        except httpx.HTTPStatusError as e:
-            attempt += 1
-            # на 4xx обычно повторять бессмысленно
-            status = getattr(e.response, "status_code", None)
-            if 400 <= (status or 0) < 500 or attempt > _MAX_RETRIES:
-                body = (getattr(e.response, "text", "") or "")[:500]
-                logger.warning("mb_api: HTTP error %s for %s: %s", status, nick, body)
+    try:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+            r = await client.get(url)
+            r.raise_for_status()
+            try:
+                return r.json()
+            except Exception:
+                # Если не JSON — логируем и возвращаем None
+                logger.exception("mb_api: failed to parse JSON for nick %s", nick)
                 return None
-            wait = min(_BACKOFF_BASE * (2 ** (attempt - 1)), 10)
-            logger.warning("mb_api: retrying HTTP error %s for %s (attempt %d) after %.1fs", status, nick, attempt, wait)
-            await asyncio.sleep(wait)
-        except Exception as e:
-            attempt += 1
-            if attempt > _MAX_RETRIES:
-                logger.exception("mb_api: network error (max retries) for %s: %s", nick, e)
-                return None
-            wait = min(_BACKOFF_BASE * (2 ** (attempt - 1)), 10)
-            logger.warning("mb_api: network error for %s, retry %d after %.1fs: %s", nick, attempt, wait, e)
-            await asyncio.sleep(wait)
+    except httpx.HTTPStatusError as e:
+        status = getattr(e.response, "status_code", None)
+        body = (getattr(e.response, "text", "") or "")[:500]
+        logger.warning("mb_api: HTTP error %s for %s: %s", status, nick, body)
+        return None
+    except Exception as e:
+        logger.exception("mb_api: network error for %s: %s", nick, e)
+        return None
 
 
 def _get_cache(key: str) -> Optional[Dict[str, Any]]:
@@ -117,6 +101,9 @@ async def fetch_player_by_nick(nick: str, use_cache: bool = True) -> Optional[st
     }
     
     try:
+        roles = player_data.get("roles") or []
+        role_names = [r["name"] for r in roles] or []
+        
         player = {
             "Звёзды (рейтинг)": player_data.get("rating") or 0,
             "Погасшие звёзды (скидок)": player_data.get("faded_rating") or 0,
@@ -125,6 +112,7 @@ async def fetch_player_by_nick(nick: str, use_cache: bool = True) -> Optional[st
             "Мостики": player_data.get("mostiki") or 0,
             "Проходка на дней": player_data.get("days") or 0,
             "Аккаунт создан": player_data.get("createdAt") or "N/A",
+            "Роли": role_names
         }
         
         if player_data["discordId"]:

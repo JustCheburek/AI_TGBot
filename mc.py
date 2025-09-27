@@ -67,6 +67,4 @@ def format_status_text(payload: dict) -> str:
     if motd:
         safe_motd = re.sub(r'([_*`])', r'\\\1', motd)
         lines.append(f"<code>{safe_motd}</code>")
-    if not online:
-        lines.append("\n_Если сервер должен быть онлайн — попробуйте позже или обратитесь к администраторам._")
     return "\n".join(lines)
