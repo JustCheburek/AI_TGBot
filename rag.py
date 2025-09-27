@@ -17,6 +17,7 @@ RAG_LOADED = False
 RAG_LOCK = asyncio.Lock()
 
 async def _embed_batch(texts: list[str]) -> list[list[float]]:
+    """RU: Запрашивает эмбеддинги для пакета строк через Jina API."""
     while True:
         try:
             async with httpx.AsyncClient(timeout=60) as s:
@@ -40,6 +41,7 @@ async def _embed_batch(texts: list[str]) -> list[list[float]]:
             return []
 
 def read_text_file(p: Path) -> str:
+    """RU: Читает файл базы знаний и нормализует текст в UTF-8 с LF."""
     try:
         raw = p.read_text(encoding="utf-8", errors="ignore")
         if raw.startswith("\ufeff"):
@@ -51,6 +53,7 @@ def read_text_file(p: Path) -> str:
     
 
 def split_chunks(text: str, size: int, ov: int) -> list[str]:
+    """RU: Делит исходный текст на перекрывающиеся фрагменты для векторного индекса."""
     text = text.strip()
     if not text:
         return []
@@ -61,6 +64,7 @@ def split_chunks(text: str, size: int, ov: int) -> list[str]:
     return [c for c in out if c.strip()]
 
 async def _ensure_rag_index():
+    """RU: Загружает кэш индекса или пересобирает его при изменении данных."""
     global RAG_CHUNKS, RAG_VECS, RAG_LOADED
     async with RAG_LOCK:
         config.RAG_INDEX_DIR.mkdir(parents=True, exist_ok=True)
@@ -88,7 +92,7 @@ async def _ensure_rag_index():
         need_rebuild = (not RAG_LOADED) or (known_paths != kb_paths)
 
         if not need_rebuild:
-            # check mtimes
+            # RU: Проверяем время модификации файлов
             for p in kb_files:
                 m = p.stat().st_mtime
                 if not any(c["file"] == str(p) and abs(c.get("mtime", 0.0) - m) < 1e-6 for c in RAG_CHUNKS):
@@ -98,7 +102,7 @@ async def _ensure_rag_index():
         if not need_rebuild:
             return
 
-        logging.info("RAG: (re)building index...")
+        logging.info("RAG: (re)building index...")  # RU: Пересборка индекса
         all_chunks = []
         all_texts = []
         for p in kb_files:
@@ -131,6 +135,7 @@ async def _ensure_rag_index():
             logging.warning("RAG: no chunks produced (empty kb?)")
 
 async def search(query: str, k: int = config.RAG_TOP_K):
+    """RU: Возвращает top-k наиболее релевантных фрагментов из базы знаний."""
     if not config.RAG_ENABLED:
         return []
     await _ensure_rag_index()
@@ -150,9 +155,10 @@ async def build_full_context(
     k: int = config.RAG_TOP_K,
     max_chars: int = 2000,
 ) -> str:
+    """RU: Собирает динамический контекст сервера, данные игрока и фрагменты RAG."""
     sections: list[str] = []
 
-    # Dynamic server context
+    # RU: Динамический контекст сервера
     try:
         payload = await mc.fetch_status()
         server_ctx = mc.format_status_text(payload)
@@ -161,7 +167,7 @@ async def build_full_context(
     except Exception:
         logging.exception("RAG: failed to fetch server status")
 
-    # Dynamic player context
+    # RU: Динамический контекст игрока
     if username:
         try:
             player_info = await fetch_player_by_nick(username)
@@ -172,7 +178,7 @@ async def build_full_context(
             
     sections.append(f"Текущая дата: {datetime.now()}")
 
-    # Knowledge base via semantic search
+    # RU: База знаний через семантический поиск
     results = await search(user_query, k=k)
     if results:
         total = 0
@@ -192,22 +198,3 @@ async def build_full_context(
             sections.append("\n".join(kb_parts))
 
     return "\n\n".join([s for s in sections if s])
-
-# async def build_context(user_query: str, k: int = config.RAG_TOP_K, max_chars: int = 2000) -> str:
-#     results = await search(user_query, k=k)
-#     if not results:
-#         return ""
-#     lines = ["Ниже выдержки из базы знаний. Используй их только как справку и не включай служебные индексы/ссылки в ответ."]
-#     total = 0
-#     for ch, sc in results:
-#         snippet = ch["text"].strip()
-#         if not snippet:
-#             continue
-#         if total + len(snippet) > max_chars:
-#             snippet = snippet[:max(0, max_chars - total)]
-#         lines.append(snippet)
-#         total += len(snippet)
-#         if total >= max_chars:
-#             break
-#     lines.append("— Конец выдержек —")
-#     return "\n".join(lines)

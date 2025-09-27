@@ -15,8 +15,9 @@ import rag
 import handlers_helpers
 import msgs
 
-# is_subscribed implementation (uses bot)
+# Проверка подписки пользователя на обязательный канал (использует объект bot)
 async def is_subscribed(id: int) -> bool:
+    """RU: Проверяет, подписан ли пользователь на обязательный канал."""
     try:
         member = await bot.get_chat_member(chat_id=config.CHANNEL, user_id=id)
         return member.status in ("creator", "administrator", "member", "restricted")
@@ -25,6 +26,7 @@ async def is_subscribed(id: int) -> bool:
         return False
 
 def _build_freeze_keyboard(id: int, hot: bool = True) -> types.InlineKeyboardMarkup:
+    """RU: Формирует инлайн-клавиатуру для заморозки/разморозки автоответов."""
     buttons = [
         types.InlineKeyboardButton(text=utils.get_hour_string(hours), callback_data=f"freeze:{id}:{hours}")
         for hours in config.FREEZE_OPTIONS
@@ -36,6 +38,7 @@ def _build_freeze_keyboard(id: int, hot: bool = True) -> types.InlineKeyboardMar
 
 @dp.message(Command("freeze"))
 async def cmd_freeze(message: types.Message):
+    """RU: Показывает кнопки для включения/отключения временной заморозки автоответов."""
     if not message.from_user:
         return
 
@@ -55,6 +58,7 @@ async def cmd_freeze(message: types.Message):
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
+    """RU: Приветствие и предложение подписаться при необходимости."""
     id = message.from_user.id
     username = (message.from_user.username or f"{message.from_user.first_name}")
     if await is_subscribed(id):
@@ -71,6 +75,7 @@ async def cmd_start(message: types.Message):
     )
 
 @dp.message(Command("status"))
+# RU: Возвращает текущий статус Minecraft-сервера (через публичное API)
 async def cmd_status(message: types.Message):
     msg = await message.reply("🔎 Проверяю статус сервера...")
     try:
@@ -81,6 +86,7 @@ async def cmd_status(message: types.Message):
         await msg.edit_text(f"⚠️ Не удалось получить статус: `{utils._shorten(str(e), 300)}`")
 
 @dp.message(Command("rag_reindex"))
+# RU: Пересборка локального RAG-индекса по запросу администратора
 async def cmd_rag_reindex(message: types.Message):
     if not config.RAG_ENABLED:
         await message.reply("RAG отключён")
@@ -98,6 +104,7 @@ async def cmd_rag_reindex(message: types.Message):
 
 @dp.callback_query()
 async def callback_any(query: types.CallbackQuery):
+    """RU: Обрабатывает коллбеки: freeze/unfreeze и проверку подписки."""
     username = (query.from_user.username or f"{query.from_user.first_name}")
     data = (query.data or "").strip()
 
@@ -167,6 +174,7 @@ async def callback_any(query: types.CallbackQuery):
         await query.message.reply("Подписка не найдена! Убедитесь, что подписаны на канал", show_alert=True)
 
 @dp.message(Command("player"))
+ # RU: Команда /player — получить данные игрока по нику (или @username)
 async def cmd_player(message: types.Message):
     """/player [nick] — получить данные игрока из MineBridge API.
     Если ник не указан, пробуем использовать Telegram @username отправителя."""
@@ -205,6 +213,7 @@ async def cmd_player(message: types.Message):
 
 @dp.message()
 async def auto_reply(message: types.Message):
+    """RU: Автоответ ИИ — отвечает, когда сообщение адресовано боту."""
     if not message.text:
         return
     
@@ -214,12 +223,12 @@ async def auto_reply(message: types.Message):
         utils.save_incoming_message(message)
         return
 
-    # robust chat type handling (works for aiogram returning enum or string)
+    # RU: Надёжно определяем тип чата (aiogram может вернуть enum или строку)
     chat_type = getattr(message.chat, "type", None)
     if isinstance(chat_type, str):
         ct_name = chat_type.upper()
     else:
-        # chat_type may be an Enum with .name, or something else
+        # RU: chat_type может быть Enum с .name или чем-то иным
         ct_name = getattr(chat_type, "name", str(chat_type)).upper()
     is_group = ct_name in ("GROUP", "SUPERGROUP")
 

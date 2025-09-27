@@ -11,48 +11,15 @@ from aiogram.enums import ChatType
 
 HistoryKey = Tuple[int, int]
 
-async def _extract_retry_after_seconds(err) -> float | None:
-    try:
-        headers = getattr(err, "headers", None) or {}
-        if headers:
-            ra = headers.get("retry-after") or headers.get("Retry-After")
-            if ra:
-                try:
-                    return float(ra)
-                except Exception:
-                    pass
-    except Exception:
-        pass
-    try:
-        ra = getattr(err, "retry_after", None)
-        if ra is not None:
-            return float(ra)
-    except Exception:
-        pass
-    try:
-        import re
-        msg = str(err)
-        m = re.search(r'(\d+)\s*m(?:in)?\s*(\d+)\s*s', msg)
-        if m:
-            return int(m.group(1)) * 60 + int(m.group(2))
-        m2 = re.search(r'in\s*(\d+)\s*s', msg)
-        if m2:
-            return int(m2.group(1))
-        m3 = re.search(r'(\d+)\s*seconds', msg)
-        if m3:
-            return int(m3.group(1))
-    except Exception:
-        pass
-    return None
-
 async def complete_openai_nostream(user_text: str, name: str, conv_key: HistoryKey, sys_prompt: str, rag_ctx: str | None = None, *, message=None) -> str:
+    """RU: Отправляет один запрос к OpenAI (без стрима) и обновляет локальную историю."""
     prompt = (user_text or "").strip()
     if not prompt:
         return ""
     prompt = utils._shorten(prompt)
-    # Build input differently for group chats: fetch context from chat thread on demand
+    # RU: Для групп формируем инпут иначе — подтягиваем контекст треда по необходимости
     chat_id = conv_key[0]
-    # message is aiogram.types.Message; if provided and chat is group, use reply chain, skip local history
+    # RU: message — это aiogram.types.Message; если это группа, используем цепочку reply и не пишем в локальную историю
     use_thread = False
     try:
         if message is not None:

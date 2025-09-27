@@ -5,19 +5,23 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# MineBridge API
+# RU: Параметры MineBridge API
 MB_HOST = "майнбридж.рф"
 
-# Telegram / OpenAI
+# RU: Токены Telegram / OpenAI
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY")
 CHANNEL = os.getenv("CHANNEL", "@MineBridgeOfficial")
 
-# Minecraft
+# Память
+GROUP_MAX_MESSAGES = 20
+DM_MAX_MESSAGES = 5
+
+# RU: Minecraft-сервер
 MC_SERVER_HOST = os.getenv("MC_SERVER_HOST")
 
-# RAG
+# RU: Настройки RAG (поиск по базе знаний)
 JINA_KEY = os.getenv("JINA_API_KEY")
 BASE_DIR = Path(__file__).resolve().parent
 KB_DIR = Path(__file__).resolve().parent / "kb"          # положите сюда .txt/.md файлы
@@ -30,14 +34,11 @@ RAG_TOP_K = 6
 RAG_EMB_MODEL = "jina-embeddings-v3"
 RAG_EMB_BATCH = 64
 
-# misc
-MAX_HISTORY_MESSAGES = 5
+# RU: Прочие параметры
 MC_CACHE_TTL = 20
-MAX_OPENAI_RETRIES = 2
-OPENAI_BACKOFF_BASE = 1.5
 FREEZE_OPTIONS = (1, 2, 3, 4)
 
-# sanity checks
+# RU: Проверка обязательных переменных окружения
 if not BOT_TOKEN:
     raise SystemExit("Set BOT_TOKEN in .env")
 if not OPENAI_API_KEY:

@@ -1,4 +1,5 @@
 # main.py
+# RU: Точка входа: инициализация бота, прогрев RAG и запуск поллинга.
 import asyncio
 import logging
 import traceback
@@ -49,6 +50,7 @@ async def main():
     await on_startup()
 
     # отладочное логирование: покажем, что модуль handlers импортирован
+    # RU: Хендлеры импортированы; стартуем поллинг
     logging.info("Handlers imported; starting polling")
 
     try:

@@ -3,6 +3,8 @@ import html
 from html.parser import HTMLParser
 from urllib.parse import urlparse
 
+"""RU: Утилиты для безопасной HTML-разметки: whitelist-теги и очистка."""
+
 ALLOWED_TAGS = {
     "a", "b", "strong", "i", "em", "code", "s", "strike", "del", "u", "pre"
 }
@@ -10,6 +12,7 @@ ALLOWED_TAGS = {
 SAFE_SCHEMES = {"http", "https"}
 
 class WhitelistHTMLSanitizer(HTMLParser):
+    """RU: Санитайзер HTML, пропускающий только разрешённые теги Telegram."""
     def __init__(self):
         super().__init__(convert_charrefs=False)
         self.out = []
@@ -76,6 +79,7 @@ class WhitelistHTMLSanitizer(HTMLParser):
         return "".join(self.out)
 
 def _is_safe_href(url: str) -> bool:
+    """RU: Проверяет, безопасен ли href (разрешены http/https и относительные ссылки)."""
     try:
         p = urlparse(url)
         # относительные ссылки тоже ок
@@ -119,6 +123,7 @@ def _strip_markdown_outside_code_pre(html_text: str) -> str:
     return tmp
 
 def remove(text: str) -> str:
+    """RU: Удаляет небезопасные теги и нормализует HTML-форматирование."""
     if not text:
         return ""
 

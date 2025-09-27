@@ -1,4 +1,5 @@
 import os
+# RU: Простой ручной тест вызова OpenAI через OpenRouter
 from openai import OpenAI
 from dotenv import load_dotenv
 
