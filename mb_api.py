@@ -29,7 +29,7 @@ async def _fetch_json_from_api(nick: str) -> Optional[Dict[str, Any]]:
     """Выполнить HTTP GET к API и вернуть JSON-пайлоад или None при ошибке."""
     host = _make_punycode_host(config.MB_HOST)
     nick_esc = quote_plus(nick, safe="")  # экранируем ник в URL
-    url = f"http://{host}/api/name/{nick_esc}"
+    url = f"https://{host}/api/name/{nick_esc}"
 
     try:
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:

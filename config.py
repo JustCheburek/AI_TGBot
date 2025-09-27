@@ -6,8 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # MineBridge API
-MB_HOST2 = "майнбридж.рф"
-MB_HOST = "localhost:3000"
+MB_HOST = "майнбридж.рф"
 
 # Telegram / OpenAI
 BOT_TOKEN = os.getenv("BOT_TOKEN")
