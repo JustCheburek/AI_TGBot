@@ -215,6 +215,7 @@ async def cmd_player(message: types.Message):
 async def auto_reply(message: types.Message):
     """RU: Автоответ ИИ — отвечает, когда сообщение адресовано боту."""
     if not message.text:
+        utils.save_incoming_message(message)
         return
     
     id = getattr(message.from_user, "id", None)

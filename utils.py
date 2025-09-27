@@ -73,10 +73,23 @@ def save_incoming_message(message: types.Message) -> None:
     """RU: Записывает сообщение пользователя в буфер транскрипта чата."""
     chat_id = message.chat.id
     text = (message.text or "").strip()
-    if not text:
-        return
     author = _author_from(message)
     is_bot = bool(getattr(message.from_user, "is_bot", False))
+    if not text:
+        if message.sticker:
+            text = f"Стикер: {message.sticker.file_id}"
+        elif message.photo:
+            text = f"Фото: {message.photo[-1].file_id}"
+        elif message.document:
+            text = f"Документ: {message.document.file_id}"
+        elif message.voice:
+            text = f"Голосовое сообщение: {message.voice.file_id}"
+        elif message.video:
+            text = f"Видео: {message.video.file_id}"
+        elif message.audio:
+            text = f"Аудио: {message.audio.file_id}"
+        else:
+            return
     CHAT_LOGS[chat_id].append((author, is_bot, _shorten(text)))
 
 def save_outgoing_message(chat_id: int, text: str, bot_display_name: str = "Ассистент") -> None:

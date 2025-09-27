@@ -7,6 +7,7 @@ import mimetypes
 import re
 import uuid
 from urllib.parse import urlparse, unquote
+import random
 
 import httpx
 
@@ -141,6 +142,7 @@ async def _search_image_online(query: str) -> BufferedInputFile | None:
                         await asyncio.sleep(0.5 + attempt * 0.5)
                         continue
                     return None
+                random.shuffle(hits)
                 for item in hits:
                     image_url = (
                         item.get("largeImageURL")
