@@ -101,9 +101,6 @@ async def fetch_player_by_nick(nick: str, use_cache: bool = True) -> Optional[st
     }
     
     try:
-        roles = player_data.get("roles") or []
-        role_names = [r["name"] for r in roles] or []
-        
         player = {
             "Звёзды (рейтинг)": player_data.get("rating") or 0,
             "Погасшие звёзды (скидок)": player_data.get("faded_rating") or 0,
@@ -112,7 +109,7 @@ async def fetch_player_by_nick(nick: str, use_cache: bool = True) -> Optional[st
             "Мостики": player_data.get("mostiki") or 0,
             "Проходка на дней": player_data.get("days") or 0,
             "Аккаунт создан": player_data.get("createdAt") or "N/A",
-            "Роли": role_names
+            "Роли": player_data.get("roles") or []
         }
         
         if player_data["discordId"]:
