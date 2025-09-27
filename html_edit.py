@@ -130,12 +130,12 @@ def remove(text: str) -> str:
     parser.feed(text)
     sanitized = parser.get_html()
 
-    # 3) Снимаем markdown вне <code>/<pre>
-    sanitized = _strip_markdown_outside_code_pre(sanitized)
+    # 0) Снимаем markdown вне <code>/<pre>
+    # sanitized = _strip_markdown_outside_code_pre(sanitized)
 
-    # 4) Чуть-чуть подчистим пробелы
-    sanitized = re.sub(r"\s+([,.;:!?])", r"\1", sanitized)
-    sanitized = re.sub(r"[ \t]{2,}", " ", sanitized)
-    sanitized = re.sub(r"\n{3,}", "\n\n", sanitized)
+    # 3) Чуть-чуть подчистим пробелы
+    #sanitized = re.sub(r"\s+([,.;:!?])", r"\1", sanitized)
+    #sanitized = re.sub(r"[ \t]{2,}", " ", sanitized)
+    #sanitized = re.sub(r"\n{3,}", "\n\n", sanitized)
 
     return sanitized.strip()

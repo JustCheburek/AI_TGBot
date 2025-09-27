@@ -111,26 +111,6 @@ async def build_input_from_chat_thread(
 def hash(s: str) -> str:
     return hashlib.sha1(s.encode("utf-8")).hexdigest()[:10]
 
-def read_text_file(p: Path) -> str:
-    try:
-        raw = p.read_text(encoding="utf-8", errors="ignore")
-        if raw.startswith("\ufeff"):
-            raw = raw.lstrip("\ufeff")
-        return raw.replace("\r\n", "\n").replace("\r", "\n")
-    except Exception:
-        logging.exception("RAG: failed to read %s", p)
-        return ""
-
-def split_chunks(text: str, size: int, ov: int) -> list[str]:
-    text = text.strip()
-    if not text:
-        return []
-    out, i = [], 0
-    while i < len(text):
-        out.append(text[i:i+size])
-        i += max(1, size - ov)
-    return [c for c in out if c.strip()]
-
 # system prompt loader
 _PROMPT_CACHE: dict = {}
 

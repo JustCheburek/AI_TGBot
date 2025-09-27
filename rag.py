@@ -48,6 +48,27 @@ async def _embed_batch(texts: list[str]) -> list[list[float]]:
             logging.exception("RAG: Jina embeddings request failed")
             raise
 
+def read_text_file(p: Path) -> str:
+    try:
+        raw = p.read_text(encoding="utf-8", errors="ignore")
+        if raw.startswith("\ufeff"):
+            raw = raw.lstrip("\ufeff")
+        return raw.replace("\r\n", "\n").replace("\r", "\n")
+    except Exception:
+        logging.exception("RAG: failed to read %s", p)
+        return ""
+    
+
+def split_chunks(text: str, size: int, ov: int) -> list[str]:
+    text = text.strip()
+    if not text:
+        return []
+    out, i = [], 0
+    while i < len(text):
+        out.append(text[i:i+size])
+        i += max(1, size - ov)
+    return [c for c in out if c.strip()]
+
 async def _ensure_rag_index():
     global RAG_CHUNKS, RAG_VECS, RAG_LOADED
     async with RAG_LOCK:
@@ -90,8 +111,8 @@ async def _ensure_rag_index():
         all_chunks = []
         all_texts = []
         for p in kb_files:
-            txt = utils.read_text_file(p)
-            parts = utils.split_chunks(txt, config.RAG_CHUNK_SIZE, config.RAG_CHUNK_OVERLAP)
+            txt = read_text_file(p)
+            parts = split_chunks(txt, config.RAG_CHUNK_SIZE, config.RAG_CHUNK_OVERLAP)
             m = p.stat().st_mtime
             for i, ch in enumerate(parts):
                 cid = f"{utils.hash(str(p))}:{i}"
