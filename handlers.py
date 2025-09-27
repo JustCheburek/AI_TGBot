@@ -194,11 +194,12 @@ async def cmd_player(message: types.Message):
 
     msg = await message.reply("🔎 Проверяю игрока...")
     try:
-        data_json = await mb_api.fetch_player_by_nick(nick)
-        if not data_json:
+        player_info = await mb_api.fetch_player_by_nick(nick)
+        if not player_info:
             await msg.edit_text(f"😕 Игрок <code>{nick}</code> не найден или произошла ошибка API.")
             return
-        await msg.edit_text(f"<b>Игрок</b> <code>{nick}</code>:\n<code>{data_json}</code>")
+        text = utils.format_player_info(nick, player_info)
+        await msg.edit_text(text)
     except Exception as e:
         await msg.edit_text(f"❌ Ошибка при запросе: {utils._shorten(str(e), 300)}")
 
@@ -245,7 +246,7 @@ async def auto_reply(message: types.Message):
         conv_key = utils.make_key(message)
 
         sys_prompt = utils.load_system_prompt_for_chat(message.chat)
-        sys_prompt += "\n\nВажно: Используй HTML-разметку для форматирования ответа (<b>, <i>, <code>). MarkDown НЕЛЬЗЯ! Все ссылки вставляй сразу в текст <a href=""></a>"
+        sys_prompt += "\n\nВажно: Используй HTML-разметку для форматирования ответа (<b>, <i>, <code>, <s>, <u>, <pre>). MarkDown НЕЛЬЗЯ! Все ссылки вставляй сразу в текст <a href=""></a>"
 
         rag_ctx = ""
         try:

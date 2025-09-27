@@ -1,4 +1,5 @@
 # utils.py
+from html import escape
 import re
 import hashlib
 import logging
@@ -110,34 +111,6 @@ async def build_input_from_chat_thread(
 def hash(s: str) -> str:
     return hashlib.sha1(s.encode("utf-8")).hexdigest()[:10]
 
-def remove_html(text: str) -> str:
-    # Разрешённые HTML-теги
-    allowed_tags = [
-        r"<b>.*?</b>",
-        r"<strong>.*?</strong>",
-        r"<i>.*?</i>",
-        r"<em>.*?</em>",
-        r"<code>.*?</code>",
-        r"<s>.*?</s>",
-        r"<strike>.*?</strike>",
-        r"<del>.*?</del>",
-        r"<u>.*?</u>",
-        r"<pre.*?>.*?</pre>",  # язык внутри <pre language="...">
-    ]
-    
-    # Собираем whitelist в одно регулярное выражение
-    whitelist_pattern = "|".join(allowed_tags)
-
-    # Всё, что не попадает в whitelist → убираем
-    def replacer(match):
-        if re.fullmatch(whitelist_pattern, match.group(0), flags=re.IGNORECASE | re.DOTALL):
-            return match.group(0)
-        return ""
-
-    # Убираем все теги/markdown, кроме whitelist
-    cleaned = re.sub(r"<.*?>|(\*\*.*?\*\*|\*.*?\*|`.*?`|~~.*?~~)", replacer, text, flags=re.IGNORECASE | re.DOTALL)
-    return cleaned
-
 def read_text_file(p: Path) -> str:
     try:
         raw = p.read_text(encoding="utf-8", errors="ignore")
@@ -203,7 +176,7 @@ def should_answer(message: types.Message, bot_username: str) -> bool:
                 mention_text = text[entity.offset: entity.offset + entity.length]
                 if mention_text.lstrip("@").lower() == bot_username:
                     return True
-    BOT_ADDRESS_RE = re.compile(r'(?i)(?<!\w)(?:нейро-?бот|бот)(?!\w)')
+    BOT_ADDRESS_RE = re.compile(r'(?i)(?<!\w)(?:нейро-?бот(?:ик|яра)?|бот(?:ик|яра)?)(?!\w)')
     QUESTION_MARK_RE = re.compile(r'\?')
     INTERROGATIVE_RE = re.compile(
         r'(?i)\b('
@@ -265,3 +238,19 @@ def is_user_frozen(user_id: int) -> bool:
 
 def get_hour_string(hours: int) -> str:
     return f"{hours} час" if hours == 1 else f"{hours} часа"
+
+
+def format_player_info(nick: str, info: dict) -> str:
+    # Порядок полей
+    lines = [f"<b>Игрок</b> <code>{escape(str(nick))}</code>:"]
+
+    for key, value in info.items():
+        if key == "Роли":
+            roles_lines = "\n".join(f"• {escape(str(r))}" for r in value)
+            lines.append(f"{escape(key)}:\n{roles_lines}")
+
+        else:
+            # прочие простые поля и ссылки
+            lines.append(f"{escape(key)}: <code>{escape(str(value))}</code>")
+
+    return "\n".join(lines)

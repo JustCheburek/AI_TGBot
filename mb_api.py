@@ -29,7 +29,7 @@ async def _fetch_json_from_api(nick: str) -> Optional[Dict[str, Any]]:
     """Выполнить HTTP GET к API и вернуть JSON-пайлоад или None при ошибке."""
     host = _make_punycode_host(config.MB_HOST)
     nick_esc = quote_plus(nick, safe="")  # экранируем ник в URL
-    url = f"https://{host}/api/name/{nick_esc}"
+    url = f"http://{host}/api/name/{nick_esc}"
 
     try:
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
@@ -103,7 +103,7 @@ async def fetch_player_by_nick(nick: str, use_cache: bool = True) -> Optional[st
     try:
         player = {
             "Звёзды (рейтинг)": player_data.get("rating") or 0,
-            "Погасшие звёзды (скидок)": player_data.get("faded_rating") or 0,
+            "Погасшие звёзды (скидки)": player_data.get("faded_rating") or 0,
             "Наигранные часы": player_data.get("hours") or 0,
             "Был онлайн на сайте": player_data.get("onlineAt") or "N/A",
             "Мостики": player_data.get("mostiki") or 0,
@@ -123,7 +123,7 @@ async def fetch_player_by_nick(nick: str, use_cache: bool = True) -> Optional[st
         if use_cache:
             _set_cache(key, player)
         
-        return json.dumps(player, ensure_ascii=False)
+        return player
         
     except Exception:
         logger.exception("mb_api: unexpected error processing data for %s", nick)

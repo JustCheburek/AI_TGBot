@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import logging
 import httpx
-
+from datetime import *
 import config
 import utils
 import mc
@@ -145,7 +145,7 @@ async def build_full_context(
         payload = await mc.fetch_status()
         server_ctx = mc.format_status_text(payload)
         if server_ctx:
-            sections.append(f"Пиши про статус, только когда просят\n{server_ctx}")
+            sections.append(f"Пиши про статус, только когда просят\n{server_ctx}\n")
     except Exception:
         logging.exception("RAG: failed to fetch server status")
 
@@ -154,9 +154,11 @@ async def build_full_context(
         try:
             player_info = await fetch_player_by_nick(username)
             if player_info:
-                sections.append("Игрок (из MineBridge API):\nИспользуй данные аккаунта, только когда просят\n" + player_info)
+                sections.append(f"Игрок (из MineBridge API):\nИспользуй данные аккаунта, только когда просят\n{json.dumps(player_info, ensure_ascii=False)}\n")
         except Exception:
             logging.exception("RAG: failed to fetch player info")
+            
+    sections.append(f"Текущая дата: {datetime.now()}")
 
     # Knowledge base via semantic search
     results = await search(user_query, k=k)

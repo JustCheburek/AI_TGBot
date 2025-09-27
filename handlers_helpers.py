@@ -7,6 +7,7 @@ from bot_init import *
 import utils
 from openai import RateLimitError, APIError
 import config
+import html_edit
 
 HistoryKey = Tuple[int, int]
 
@@ -83,7 +84,7 @@ async def complete_openai_nostream(user_text: str, name: str, conv_key: HistoryK
                 temperature=1,
             )
             text = (resp.choices[0].message.content or "").strip()
-            text = utils.remove_html(text)
+            text = html_edit.remove(text)
             if text:
                 if not use_thread:
                     utils.remember_assistant(conv_key, text)
