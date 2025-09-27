@@ -1,13 +1,13 @@
 # handlers_helpers.py
 import logging
-import asyncio
 from typing import Tuple
 
 from bot_init import *
 import utils
 from openai import RateLimitError, APIError
-import config
 import html_edit
+from aiogram.enums import ChatType
+
 
 HistoryKey = Tuple[int, int]
 
@@ -56,7 +56,6 @@ async def complete_openai_nostream(user_text: str, name: str, conv_key: HistoryK
     use_thread = False
     try:
         if message is not None:
-            from aiogram.enums import ChatType
             chat_type = getattr(message.chat, "type", None)
             if chat_type in (ChatType.GROUP, ChatType.SUPERGROUP):
                 use_thread = True
@@ -72,7 +71,7 @@ async def complete_openai_nostream(user_text: str, name: str, conv_key: HistoryK
         
     if rag_ctx:
         input_with_ctx = f"{rag_ctx}\n\n{input_with_ctx}"
-    attempt = 0
+        
     while True:
         try:
             resp = await openai_client.chat.completions.create(
@@ -92,11 +91,5 @@ async def complete_openai_nostream(user_text: str, name: str, conv_key: HistoryK
                     utils.save_outgoing_message(chat_id, text)
             return text
         except (RateLimitError, APIError) as e:
-            attempt += 1
-            if attempt > config.MAX_OPENAI_RETRIES:
-                logging.exception("OpenAI non-stream rate limit: max retries reached")
-                raise
-            wait = await _extract_retry_after_seconds(e) or min(config.OPENAI_BACKOFF_BASE * (2 ** (attempt - 1)), 60)
-            logging.warning("OpenAI non-stream rate-limit/API error, retry %d/%d after %.1fs: %s",
-                            attempt, config.MAX_OPENAI_RETRIES, wait, e)
-            await asyncio.sleep(wait)
+            logging.exception("OpenAI non-stream rate limit")
+            return None

@@ -1,5 +1,6 @@
 # mc.py
 import asyncio
+import logging
 import httpx
 import re
 
@@ -16,10 +17,6 @@ async def fetch_status() -> dict:
 
     url = f"https://api.mcsrvstat.us/3/{config.MC_SERVER_HOST}"
 
-    attempt = 0
-    MAX_OPENAI_RETRIES = 2
-    OPENAI_BACKOFF_BASE = 1.5
-
     while True:
         try:
             async with httpx.AsyncClient(timeout=15) as s:
@@ -28,15 +25,15 @@ async def fetch_status() -> dict:
                 data = r.json()
                 _MC_STATUS_CACHE[config.MC_SERVER_HOST] = (now, data)
                 return data
+            
         except httpx.HTTPStatusError as e:
-            attempt += 1
-            if attempt > MAX_OPENAI_RETRIES:
-                body = (e.response.text or "")[:300]
-                raise RuntimeError(f"MC API HTTP {e.response.status_code}: {body}")
-            wait = min(OPENAI_BACKOFF_BASE * (2 ** (attempt - 1)), 10)
-            await asyncio.sleep(wait)
+            body = (e.response.text or "")[:300]
+            logging.exception(f"MC API HTTP {e.response.status_code}: {body}")
+            return {}
+        
         except Exception as e:
-            raise RuntimeError(f"Не удалось получить статус сервера: {e}") from e
+            logging.exception(f"MC API request failed: {e}")
+            return {}
 
 def format_status_text(payload: dict) -> str:
     online = bool(payload.get("online"))

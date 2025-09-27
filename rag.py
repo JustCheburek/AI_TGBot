@@ -17,17 +17,13 @@ RAG_LOADED = False
 RAG_LOCK = asyncio.Lock()
 
 async def _embed_batch(texts: list[str]) -> list[list[float]]:
-    JINA_KEY = __import__("os").environ.get("JINA_API_KEY")
-    if not JINA_KEY:
-        raise RuntimeError("JINA_API_KEY is not set in environment")
-    attempt = 0
     while True:
         try:
             async with httpx.AsyncClient(timeout=60) as s:
                 r = await s.post(
                     "https://api.jina.ai/v1/embeddings",
                     headers={
-                        "Authorization": f"Bearer {JINA_KEY}",
+                        "Authorization": f"Bearer {config.JINA_KEY}",
                         "Accept": "application/json",
                     },
                     json={"model": config.RAG_EMB_MODEL, "input": texts},
@@ -36,17 +32,12 @@ async def _embed_batch(texts: list[str]) -> list[list[float]]:
                 payload = r.json()
                 return [item["embedding"] for item in payload["data"]]
         except httpx.HTTPStatusError as e:
-            attempt += 1
-            if attempt > config.MAX_OPENAI_RETRIES:
-                body = (e.response.text or "")[:500]
-                logging.exception("RAG: Jina HTTP %s, body: %s", e.response.status_code, body)
-                raise
-            wait = min(config.OPENAI_BACKOFF_BASE * (2 ** (attempt - 1)), 60)
-            logging.warning("RAG: Jina HTTP %s, retry %d/%d after %.1fs", e.response.status_code, attempt, config.MAX_OPENAI_RETRIES, wait)
-            await asyncio.sleep(wait)
+            body = (e.response.text or "")[:500]
+            logging.exception("RAG: Jina HTTP %s, body: %s", e.response.status_code, body)
+            return []
         except Exception:
             logging.exception("RAG: Jina embeddings request failed")
-            raise
+            return []
 
 def read_text_file(p: Path) -> str:
     try:

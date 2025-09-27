@@ -11,12 +11,14 @@ MB_HOST = "майнбридж.рф"
 # Telegram / OpenAI
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY")
 CHANNEL = os.getenv("CHANNEL", "@MineBridgeOfficial")
 
 # Minecraft
 MC_SERVER_HOST = os.getenv("MC_SERVER_HOST")
 
 # RAG
+JINA_KEY = os.getenv("JINA_API_KEY")
 BASE_DIR = Path(__file__).resolve().parent
 KB_DIR = Path(__file__).resolve().parent / "kb"          # положите сюда .txt/.md файлы
 RAG_INDEX_DIR = Path(__file__).resolve().parent / ".rag_cache"
@@ -42,3 +44,5 @@ if not OPENAI_API_KEY:
     raise SystemExit("Set OPENAI_API_KEY in .env")
 if not MC_SERVER_HOST:
     raise SystemExit("Set MC_SERVER_HOST in .env")
+if not JINA_KEY:
+    raise RuntimeError("Set JINA_API_KEY in .env")
