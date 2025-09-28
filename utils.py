@@ -172,6 +172,10 @@ def _read_txt_prompt(path: Path) -> str:
         raw = raw.lstrip("\ufeff")
     text = raw.replace("\r\n", "\n").replace("\r", "\n").strip()
     _PROMPT_CACHE[cache_key] = (mtime, text)
+    
+    text += "\n\nПоддерживаются теги [[photo:...]] и [[sticker:...]] (file_id/alias/last)."
+    text += "\n\nВажно: Используй HTML-разметку для форматирования ответа (<b>, <i>, <code>, <s>, <u>, <pre>). MarkDown НЕЛЬЗЯ! Все ссылки вставляй сразу в текст <a href=""></a>"
+    
     return text
 
 def load_system_prompt_for_chat(chat: types.Chat) -> str:
@@ -191,7 +195,7 @@ def load_system_prompt_for_chat(chat: types.Chat) -> str:
 
 def should_answer(message: types.Message, bot_username: str) -> bool:
     """RU: Эвристически решает, нужно ли боту отвечать автоматически."""
-    text = (message.text or "").strip()
+    text = (getattr(message, "text", None) or getattr(message, "caption", None) or "").strip()
     # RU: Если это reply — реагируем только если ответ адресован нашему боту
     if message.reply_to_message and message.reply_to_message.from_user and message.reply_to_message.from_user.is_bot:
         replied_username = (getattr(message.reply_to_message.from_user, "username", "") or "").lower()
@@ -206,10 +210,11 @@ def should_answer(message: types.Message, bot_username: str) -> bool:
                 if mention_text.lstrip("@").lower() == bot_username:
                     return True
     BOT_ADDRESS_RE = re.compile(r'(?i)(?<!\w)(?:нейро-?бот(?:ик|яра)?|бот(?:ик|яра)?|бридж(?:ик)?)(?!\w)')
+    if BOT_ADDRESS_RE.search(text):
+        return True
     QUESTION_MARK_RE = re.compile(r'\?')
     INTERROGATIVE_RE = re.compile(
         r'(?i)\b('
-        r'как|почему|зачем|где|когда|сколько|кто|что|какой|какая|какие|чем|куда|откуда|'
         r'можно ли|кто может помочь|кто поможет|подскаж(?:и|ите)|помогите|нужна помощь|help|помощь'
         r')\b'
     )
@@ -219,20 +224,18 @@ def should_answer(message: types.Message, bot_username: str) -> bool:
         r')\b'
     )
     NOISE_RE = re.compile(r'^\s*(?:[^\w\s]|[\w]{1,2})\s*$')
-    if not text or NOISE_RE.match(text):
+    if NOISE_RE.match(text):
         return False
     score = 0
-    if BOT_ADDRESS_RE.search(text):
-        score += 4
     if QUESTION_MARK_RE.search(text):
-        score += 2
+        score += 1
     if INTERROGATIVE_RE.search(text):
         score += 2
     if COMMAND_RE.search(text):
         score += 1
     if len(text) >= 25:
         score += 1
-    return score >= 4
+    return score >= 3
 
 _USER_FREEZES: Dict[int, float] = {}
 

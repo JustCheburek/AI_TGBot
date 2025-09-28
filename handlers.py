@@ -2,6 +2,7 @@
 import logging
 import time
 import re
+import httpx
 
 from aiogram import types
 from aiogram.filters import Command
@@ -35,6 +36,22 @@ def _build_freeze_keyboard(id: int, hot: bool = True) -> types.InlineKeyboardMar
     if hot:
         rows.append([types.InlineKeyboardButton(text="🔥 Разморозка 🔥", callback_data=f"unfreeze:{id}")])
     return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
+@dp.message(Command("id"))
+async def cmd_id(message: types.Message):
+    """RU: Ответить ID текущего чата."""
+    try:
+        chat_id = getattr(message.chat, "id", None)
+        if chat_id is None:
+            await message.reply("Не удалось определить ID чата")
+            return
+        await message.reply(f"ID чата: <code>{chat_id}</code>")
+    except Exception:
+        logging.exception("/id handler failed")
+        try:
+            await message.reply("Произошла ошибка при получении ID чата")
+        except Exception:
+            pass
 
 @dp.message(Command("freeze"))
 async def cmd_freeze(message: types.Message):
@@ -199,7 +216,6 @@ async def cmd_player(message: types.Message):
     if not nick:
         await message.reply("Укажи ник: <code>/player [ник]</code>. Не удалось определить твой ник по @username.")
         return
-
     msg = await message.reply("🔎 Проверяю игрока...")
     try:
         player_info = await mb_api.fetch_player_by_nick(nick)
@@ -214,7 +230,11 @@ async def cmd_player(message: types.Message):
 @dp.message()
 async def auto_reply(message: types.Message):
     """RU: Автоответ ИИ — отвечает, когда сообщение адресовано боту."""
-    if not message.text:
+    incoming_text = (getattr(message, "text", None) or getattr(message, "caption", None) or "").strip()
+    has_photo = bool(getattr(message, "photo", None))
+    has_image_doc = bool(getattr(message, "document", None) and str(getattr(message.document, "mime_type", "")).startswith("image/"))
+    has_image = has_photo or has_image_doc
+    if not incoming_text and not has_image:
         # RU: Сохраняем известные нетекстовые данные (в т.ч. стикеры), но не отвечаем
         try:
             if getattr(message, "sticker", None) is not None:
@@ -255,33 +275,61 @@ async def auto_reply(message: types.Message):
             await bot.send_chat_action(chat_id=message.chat.id, action="typing")
         except Exception:
             pass
-
-        msg = await message.reply("⏳ <b>Печатаю...</b>")
-
+        msg = await message.reply("🖼️ <b>Распознаю изображение...</b>" if has_image else "⏳ <b>Думаю...</b>")
         username = (message.from_user.username or f"{message.from_user.first_name}")
         conv_key = utils.make_key(message)
 
         sys_prompt = utils.load_system_prompt_for_chat(message.chat)
-        sys_prompt += "\n\nПоддерживаются теги [[photo:...]] и [[sticker:...]] (file_id/alias/last)."
-        sys_prompt += "\n\nВажно: Используй HTML-разметку для форматирования ответа (<b>, <i>, <code>, <s>, <u>, <pre>). MarkDown НЕЛЬЗЯ! Все ссылки вставляй сразу в текст <a href=""></a>"
 
         rag_ctx = ""
         try:
             # Получаем RAG контекст (если включён)
             if config.RAG_ENABLED:
-                rag_ctx = await rag.build_full_context(message.text, username)
+                rag_ctx = await rag.build_full_context(incoming_text, username)
         except Exception:
             logging.exception("RAG: failed to build context")
 
-        # call OpenAI (non-stream). Keep as in original file
-        answer = await handlers_helpers.complete_openai_nostream(
-            message.text,
-            username,
-            conv_key,
-            sys_prompt,
-            rag_ctx=rag_ctx,
-            message=message,
-        )
+        # call OpenAI: vision for images, plain for text
+        if has_image:
+            try:
+                if message.photo:
+                    file_id = message.photo[-1].file_id
+                    mime = "image/jpeg"
+                else:
+                    file_id = message.document.file_id
+                    mime = (message.document.mime_type or "image/jpeg")
+                fobj = await bot.get_file(file_id)
+                file_path = getattr(fobj, "file_path", None)
+                if not file_path:
+                    raise RuntimeError("missing file_path")
+                url = f"https://api.telegram.org/file/bot{config.BOT_TOKEN}/{file_path}"
+                timeout = httpx.Timeout(20.0, connect=10.0, read=20.0)
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    resp = await client.get(url)
+                    resp.raise_for_status()
+                    image_bytes = resp.content
+                answer = await handlers_helpers.complete_openai_vision(
+                    image_bytes,
+                    mime,
+                    incoming_text,
+                    username,
+                    conv_key,
+                    sys_prompt,
+                    rag_ctx=rag_ctx,
+                    message=message,
+                )
+            except Exception:
+                logging.exception("vision flow failed")
+                answer = "Не удалось обработать изображение. Попробуй ещё раз прислать фото или добавь подпись."
+        else:
+            answer = await handlers_helpers.complete_openai_nostream(
+                incoming_text,
+                username,
+                conv_key,
+                sys_prompt,
+                rag_ctx=rag_ctx,
+                message=message,
+            )
 
         await msgs.long_text(msg, message, answer)
     except Exception as e:
