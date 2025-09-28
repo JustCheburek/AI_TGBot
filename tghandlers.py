@@ -1,18 +1,17 @@
-﻿# handlers.py
+﻿# tghandlers.py
 import logging
 import time
-import re
 
 from aiogram import types
 from aiogram.filters import Command
+from main import *
 
-from bot_init import *
 import config
 import utils
 import mc
 import mb_api
 import rag
-import handlers_helpers
+import ai
 import msgs
 
 # Проверка подписки пользователя на обязательный канал (использует объект bot)
@@ -262,9 +261,7 @@ async def auto_reply(message: types.Message):
         conv_key = utils.make_key(message)
 
         sys_prompt = utils.load_system_prompt_for_chat(message.chat)
-        sys_prompt += "\n\nПоддерживаются теги [[photo:...]] и [[sticker:...]] (file_id/alias/last)."
-        sys_prompt += "\n\nВажно: Используй HTML-разметку для форматирования ответа (<b>, <i>, <code>, <s>, <u>, <pre>). MarkDown НЕЛЬЗЯ! Все ссылки вставляй сразу в текст <a href=""></a>"
-
+        
         rag_ctx = ""
         try:
             # Получаем RAG контекст (если включён)
@@ -273,8 +270,8 @@ async def auto_reply(message: types.Message):
         except Exception:
             logging.exception("RAG: failed to build context")
 
-        # call OpenAI (non-stream). Keep as in original file
-        answer = await handlers_helpers.complete_openai_nostream(
+        # call OpenAI. Keep as in original file
+        answer = await ai.request(
             message.text,
             username,
             conv_key,

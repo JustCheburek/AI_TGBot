@@ -187,9 +187,6 @@ async def _search_image_online(query: str) -> BufferedInputFile | None:
     return None
 
 
-
-
-
 async def _resolve_photo_payload(payload: str) -> str | FSInputFile | BufferedInputFile | None:
     """RU: Преобразует плейсхолдер [[photo:...]] в URL или файл для отправки."""
     target = (payload or "").strip()

@@ -87,41 +87,6 @@ def _is_safe_href(url: str) -> bool:
     except Exception:
         return False
 
-def _strip_markdown_outside_code_pre(html_text: str) -> str:
-    """
-    Снимаем markdown вне <code>/<pre>. Для этого временно прячем содержимое этих тегов плейсхолдерами.
-    """
-    placeholders = []
-    def _store(m):
-        placeholders.append(m.group(0))
-        return f"@@@MD_SAFE_{len(placeholders)-1}@@@"
-
-    # Прячем <pre>...</pre> и <code>...</code>
-    tmp = re.sub(r"(?is)<pre>.*?</pre>", _store, html_text)
-    tmp = re.sub(r"(?is)<code>.*?</code>", _store, tmp)
-
-    # Снимаем markdown
-    # тройные бэктики
-    tmp = re.sub(r"```(.*?)```", r"\1", tmp, flags=re.DOTALL)
-    # одинарные бэктики
-    tmp = re.sub(r"`([^`]*)`", r"\1", tmp)
-    # **жирный** и __жирный__
-    tmp = re.sub(r"\*\*(.+?)\*\*", r"\1", tmp, flags=re.DOTALL)
-    tmp = re.sub(r"__(.+?)__", r"\1", tmp, flags=re.DOTALL)
-    # *курсив* и _курсив_
-    tmp = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"\1", tmp, flags=re.DOTALL)
-    tmp = re.sub(r"(?<!_)_(?!_)(.+?)(?<!_)_(?!_)", r"\1", tmp, flags=re.DOTALL)
-    # ~~зачёрк~~
-    tmp = re.sub(r"~~(.+?)~~", r"\1", tmp, flags=re.DOTALL)
-
-    # Возвращаем сохранённые фрагменты
-    def _restore(m):
-        idx = int(m.group(1))
-        return placeholders[idx]
-
-    tmp = re.sub(r"@@@MD_SAFE_(\d+)@@@", _restore, tmp)
-    return tmp
-
 def remove(text: str) -> str:
     """RU: Удаляет небезопасные теги и нормализует HTML-форматирование."""
     if not text:
@@ -134,13 +99,5 @@ def remove(text: str) -> str:
     parser = WhitelistHTMLSanitizer()
     parser.feed(text)
     sanitized = parser.get_html()
-
-    # 0) Снимаем markdown вне <code>/<pre>
-    # sanitized = _strip_markdown_outside_code_pre(sanitized)
-
-    # 3) Чуть-чуть подчистим пробелы
-    #sanitized = re.sub(r"\s+([,.;:!?])", r"\1", sanitized)
-    #sanitized = re.sub(r"[ \t]{2,}", " ", sanitized)
-    #sanitized = re.sub(r"\n{3,}", "\n\n", sanitized)
 
     return sanitized.strip()

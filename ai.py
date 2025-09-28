@@ -1,17 +1,23 @@
-# handlers_helpers.py
+# ai.py
+import os
 import logging
 from typing import Tuple
 
-from bot_init import *
 import utils
 from openai import RateLimitError, APIError
-import html_edit
+import tghtml
 from aiogram.enums import ChatType
-
+from openai import AsyncOpenAI
 
 HistoryKey = Tuple[int, int]
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+client = AsyncOpenAI(api_key=OPENAI_API_KEY, base_url="https://openrouter.ai/api/v1")
 
-async def complete_openai_nostream(user_text: str, name: str, conv_key: HistoryKey, sys_prompt: str, rag_ctx: str | None = None, *, message=None) -> str:
+
+if not OPENAI_API_KEY:
+    raise SystemExit("Set OPENAI_API_KEY in .env")
+
+async def request(user_text: str, name: str, conv_key: HistoryKey, sys_prompt: str, rag_ctx: str | None = None, *, message=None) -> str:
     """RU: Отправляет один запрос к OpenAI (без стрима) и обновляет локальную историю."""
     prompt = (user_text or "").strip()
     if not prompt:
@@ -41,7 +47,7 @@ async def complete_openai_nostream(user_text: str, name: str, conv_key: HistoryK
         
     while True:
         try:
-            resp = await openai_client.chat.completions.create(
+            resp = await client.chat.completions.create(
                 model="x-ai/grok-4-fast:free",
                 messages=[
                     {"role": "system", "content": sys_prompt},
@@ -50,7 +56,7 @@ async def complete_openai_nostream(user_text: str, name: str, conv_key: HistoryK
                 temperature=1,
             )
             text = (resp.choices[0].message.content or "").strip()
-            text = html_edit.remove(text)
+            text = tghtml.remove(text)
             if text:
                 if not use_thread:
                     utils.remember_assistant(conv_key, text)

@@ -13,7 +13,6 @@ from aiogram import types
 from aiogram.enums import ChatType
 
 import config
-from bot_init import *
 
 # ===== Per-user short history (диалоги пользователь↔ассистент) =====
 HistoryKey = Tuple[int, int]  # (chat_id, user_id)
@@ -29,6 +28,7 @@ CHAT_LOGS: Dict[int, Deque[ChatLine]] = defaultdict(
     lambda: deque(maxlen=config.GROUP_MAX_MESSAGES)
 )
 STICKER_LOGS: Dict[int, Deque[str]] = defaultdict(lambda: deque(maxlen=50))
+_USER_FREEZES: Dict[int, float] = {}
 
 
 def _shorten(s: str, limit: int = 400) -> str:
@@ -171,7 +171,12 @@ def _read_txt_prompt(path: Path) -> str:
     if raw.startswith("\ufeff"):
         raw = raw.lstrip("\ufeff")
     text = raw.replace("\r\n", "\n").replace("\r", "\n").strip()
+    
+    text += "\n\nПоддерживаются теги [[photo:...]] и [[sticker:...]] (file_id/alias/last)."
+    text += "\n\nВажно: Используй HTML-разметку для форматирования ответа (<b>, <i>, <code>, <s>, <u>, <pre>). MarkDown НЕЛЬЗЯ! Все ссылки вставляй сразу в текст <a href=""></a>"
+
     _PROMPT_CACHE[cache_key] = (mtime, text)
+
     return text
 
 def load_system_prompt_for_chat(chat: types.Chat) -> str:
@@ -233,8 +238,6 @@ def should_answer(message: types.Message, bot_username: str) -> bool:
     if len(text) >= 25:
         score += 1
     return score >= 4
-
-_USER_FREEZES: Dict[int, float] = {}
 
 def _cleanup_freezes(now: Optional[float] = None) -> None:
     """RU: Удаляет истёкшие записи заморозки, поддерживая кэш в актуальном состоянии."""
