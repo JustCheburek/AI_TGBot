@@ -4,19 +4,8 @@ import asyncio
 import logging
 import traceback
 
-import config, rag, mc, utils, ai, tghandlers, tgconfig as config # испорт всего-всего
-import logging
-from aiogram import Bot, Dispatcher
-from aiogram.enums import ParseMode
-from aiogram.client.default import DefaultBotProperties
-
-logging.basicConfig(level=logging.INFO)
-
-bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-dp = Dispatcher()
-
-# RU: username будет установлен при запуске (on_startup)
-bot_username: str = "minebridge52bot"
+from bot_init import bot, dp
+import config, rag, mc, utils, handlers, handlers_helpers # испорт всего-всего
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -36,14 +25,15 @@ async def on_startup():
 async def shutdown():
     try:
         # если у openai-клиента есть aclose/close — корректно закроем
-        aclose = getattr(ai.client, "aclose", None)
+        from bot_init import openai_client  # если openai_client объявлен в bot_init
+        aclose = getattr(openai_client, "aclose", None)
         if callable(aclose):
             if asyncio.iscoroutinefunction(aclose):
                 await aclose()
             else:
                 aclose()
         else:
-            close = getattr(ai.client, "close", None)
+            close = getattr(openai_client, "close", None)
             if callable(close):
                 res = close()
                 if asyncio.iscoroutine(res):

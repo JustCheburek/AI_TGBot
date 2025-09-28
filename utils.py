@@ -13,6 +13,7 @@ from aiogram import types
 from aiogram.enums import ChatType
 
 import config
+from bot_init import *
 
 # ===== Per-user short history (диалоги пользователь↔ассистент) =====
 HistoryKey = Tuple[int, int]  # (chat_id, user_id)
@@ -28,12 +29,6 @@ CHAT_LOGS: Dict[int, Deque[ChatLine]] = defaultdict(
     lambda: deque(maxlen=config.GROUP_MAX_MESSAGES)
 )
 STICKER_LOGS: Dict[int, Deque[str]] = defaultdict(lambda: deque(maxlen=50))
-_USER_FREEZES: Dict[int, float] = {}
-
-# ===== Generic helpers reused by TG and DS =====
-def shorten(s: str, limit: int = 400) -> str:
-    """Public helper to shorten text; reuses internal _shorten."""
-    return _shorten(s, limit)
 
 
 def _shorten(s: str, limit: int = 400) -> str:
@@ -66,29 +61,6 @@ def build_input_with_history(key: HistoryKey, user_text: str, name: str) -> str:
     lines.append(f"Пользователь ({name}): {user_text}")
     lines.append("Ассистент:")
     return "\n".join(lines)
-
-def build_input_from_logs(chat_or_channel_id: int, user_text: str, name: str) -> str:
-    """Build input using recent shared CHAT_LOGS (works for TG and DS)."""
-    lines: List[str] = []
-    thread: List[ChatLine] = list(CHAT_LOGS.get(chat_or_channel_id, deque()))[-config.GROUP_MAX_MESSAGES:]
-    if thread:
-        lines.append("Недавний разговор (последние сообщения):")
-        for author, is_bot, text in thread:
-            if not text:
-                continue
-            who = "Помощник" if is_bot else author
-            lines.append(f"{who}: {text}")
-        lines.append("Конец контекста")
-    lines.append(f"Пользователь ({name}): {user_text}")
-    lines.append("Ответ:")
-    return "\n".join(lines)
-
-def save_chat_line(chat_or_channel_id: int, author: str, text: str, is_bot: bool = False) -> None:
-    """Append a line to CHAT_LOGS generically (platform-agnostic)."""
-    t = (text or "").strip()
-    if not t:
-        return
-    CHAT_LOGS[chat_or_channel_id].append(((author or ""), bool(is_bot), _shorten(t)))
 
 # ====== СОХРАНЕНИЕ СООБЩЕНИЙ ЧАТА ======
 
@@ -199,12 +171,7 @@ def _read_txt_prompt(path: Path) -> str:
     if raw.startswith("\ufeff"):
         raw = raw.lstrip("\ufeff")
     text = raw.replace("\r\n", "\n").replace("\r", "\n").strip()
-    
-    text += "\n\nПоддерживаются теги [[photo:...]] и [[sticker:...]] (file_id/alias/last)."
-    text += "\n\nВажно: Используй HTML-разметку для форматирования ответа (<b>, <i>, <code>, <s>, <u>, <pre>). MarkDown НЕЛЬЗЯ! Все ссылки вставляй сразу в текст <a href=""></a>"
-
     _PROMPT_CACHE[cache_key] = (mtime, text)
-
     return text
 
 def load_system_prompt_for_chat(chat: types.Chat) -> str:
@@ -266,6 +233,8 @@ def should_answer(message: types.Message, bot_username: str) -> bool:
     if len(text) >= 25:
         score += 1
     return score >= 4
+
+_USER_FREEZES: Dict[int, float] = {}
 
 def _cleanup_freezes(now: Optional[float] = None) -> None:
     """RU: Удаляет истёкшие записи заморозки, поддерживая кэш в актуальном состоянии."""

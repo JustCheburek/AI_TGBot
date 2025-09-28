@@ -5,6 +5,7 @@ import httpx
 import re
 
 import config
+import utils
 
 _MC_STATUS_CACHE = {}
 
