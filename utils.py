@@ -30,6 +30,11 @@ CHAT_LOGS: Dict[int, Deque[ChatLine]] = defaultdict(
 STICKER_LOGS: Dict[int, Deque[str]] = defaultdict(lambda: deque(maxlen=50))
 _USER_FREEZES: Dict[int, float] = {}
 
+# ===== Generic helpers reused by TG and DS =====
+def shorten(s: str, limit: int = 400) -> str:
+    """Public helper to shorten text; reuses internal _shorten."""
+    return _shorten(s, limit)
+
 
 def _shorten(s: str, limit: int = 400) -> str:
     """RU: Обрезает пробелы и длинные строки, добавляя многоточие."""
@@ -61,6 +66,29 @@ def build_input_with_history(key: HistoryKey, user_text: str, name: str) -> str:
     lines.append(f"Пользователь ({name}): {user_text}")
     lines.append("Ассистент:")
     return "\n".join(lines)
+
+def build_input_from_logs(chat_or_channel_id: int, user_text: str, name: str) -> str:
+    """Build input using recent shared CHAT_LOGS (works for TG and DS)."""
+    lines: List[str] = []
+    thread: List[ChatLine] = list(CHAT_LOGS.get(chat_or_channel_id, deque()))[-config.GROUP_MAX_MESSAGES:]
+    if thread:
+        lines.append("Недавний разговор (последние сообщения):")
+        for author, is_bot, text in thread:
+            if not text:
+                continue
+            who = "Помощник" if is_bot else author
+            lines.append(f"{who}: {text}")
+        lines.append("Конец контекста")
+    lines.append(f"Пользователь ({name}): {user_text}")
+    lines.append("Ответ:")
+    return "\n".join(lines)
+
+def save_chat_line(chat_or_channel_id: int, author: str, text: str, is_bot: bool = False) -> None:
+    """Append a line to CHAT_LOGS generically (platform-agnostic)."""
+    t = (text or "").strip()
+    if not t:
+        return
+    CHAT_LOGS[chat_or_channel_id].append(((author or ""), bool(is_bot), _shorten(t)))
 
 # ====== СОХРАНЕНИЕ СООБЩЕНИЙ ЧАТА ======
 

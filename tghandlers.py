@@ -4,7 +4,7 @@ import time
 
 from aiogram import types
 from aiogram.filters import Command
-from main import *
+from tgmain import *
 
 import config
 import utils

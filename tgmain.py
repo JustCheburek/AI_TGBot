@@ -4,13 +4,11 @@ import asyncio
 import logging
 import traceback
 
-import config, rag, mc, utils, ai, tghandlers # испорт всего-всего
+import config, rag, mc, utils, ai, tghandlers, tgconfig as config # испорт всего-всего
 import logging
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
-import config
-import ai
 
 logging.basicConfig(level=logging.INFO)
 
