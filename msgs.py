@@ -12,9 +12,13 @@ import random
 import httpx
 
 from config import PIXABAY_API_KEY
+import config
 
 
 PHOTO_TAG_RE = re.compile(r"\[\[photo:([^\]]+)\]\]", re.IGNORECASE)
+STICKER_TAG_RE = re.compile(r"\[\[sticker:([^\]]+)\]\]", re.IGNORECASE)
+# RU: Универсальный парсер медиа-тегов, чтобы сохранять порядок в тексте
+MEDIA_TAG_RE = re.compile(r"\[\[(photo|sticker):([^\]]+)\]\]", re.IGNORECASE)
 _MAX_IMAGE_BYTES = 9.5 * 1024 * 1024
 _IMAGE_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -198,6 +202,21 @@ async def _resolve_photo_payload(payload: str) -> str | FSInputFile | BufferedIn
         return FSInputFile(str(path))
     return await _search_image_online(target)
 
+async def _resolve_sticker_payload(payload: str, chat_id: int) -> str | None:
+    """RU: Разрешает sticker-полезную нагрузку: last/alias/file_id -> file_id."""
+    p = (payload or "").strip()
+    if not p:
+        return None
+    low = p.lower()
+    if low in {"last", "copy"}:
+        from utils import get_last_sticker
+        return get_last_sticker(chat_id)
+    # алиас из конфигурации или прямой file_id
+    if isinstance(getattr(config, "STICKERS", None), dict):
+        if p in config.STICKERS:
+            return config.STICKERS[p]
+    return p
+
 
 async def long_text(msg: types.Message, user_msg: types.Message, text: str):
     """RU: Отправляет длинный текст частями и встраивает фото по тегам [[photo:...]]."""
@@ -205,14 +224,17 @@ async def long_text(msg: types.Message, user_msg: types.Message, text: str):
     if text is None:
         text = ""
 
-    print(text)
-
     actions: list[tuple[str, str]] = []
     pos = 0
-    for m in PHOTO_TAG_RE.finditer(text):
+    for m in MEDIA_TAG_RE.finditer(text):
         if m.start() > pos:
             actions.append(("text", text[pos:m.start()]))
-        actions.append(("photo", m.group(1)))
+        kind = m.group(1).lower()
+        payload = m.group(2)
+        if kind == "photo":
+            actions.append(("photo", payload))
+        elif kind == "sticker":
+            actions.append(("sticker", payload))
         pos = m.end()
     if pos < len(text):
         actions.append(("text", text[pos:]))
@@ -255,6 +277,15 @@ async def long_text(msg: types.Message, user_msg: types.Message, text: str):
                 await user_msg.answer_photo(photo=photo_arg)
             except Exception:
                 logging.exception("failed to send photo: %s", payload)
+        elif kind == "sticker":
+            sticker_id = await _resolve_sticker_payload(payload, user_msg.chat.id)
+            if not sticker_id:
+                logging.warning("sticker not found or unsupported: %s", payload)
+                continue
+            try:
+                await user_msg.answer_sticker(sticker=sticker_id)
+            except Exception:
+                logging.exception("failed to send sticker: %s", payload)
 
     if first_text_pending:
         try:

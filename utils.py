@@ -28,6 +28,8 @@ ChatLine = Tuple[str, bool, str]
 CHAT_LOGS: Dict[int, Deque[ChatLine]] = defaultdict(
     lambda: deque(maxlen=config.GROUP_MAX_MESSAGES)
 )
+STICKER_LOGS: Dict[int, Deque[str]] = defaultdict(lambda: deque(maxlen=50))
+
 
 def _shorten(s: str, limit: int = 400) -> str:
     """RU: Обрезает пробелы и длинные строки, добавляя многоточие."""
@@ -91,6 +93,30 @@ def save_incoming_message(message: types.Message) -> None:
         else:
             return
     CHAT_LOGS[chat_id].append((author, is_bot, _shorten(text)))
+
+def save_incoming_sticker(message: types.Message) -> None:
+    """RU: Сохраняет file_id присланного стикера для дальнейшего копирования."""
+    try:
+        st = getattr(message, "sticker", None)
+        if not st:
+            return
+        fid = getattr(st, "file_id", None)
+        if not fid:
+            return
+        chat_id = message.chat.id
+        STICKER_LOGS[chat_id].append(fid)
+    except Exception:
+        logging.exception("failed to save incoming sticker")
+
+def get_last_sticker(chat_id: int) -> Optional[str]:
+    """RU: Возвращает последний известный стикер file_id для чата (если есть)."""
+    dq = STICKER_LOGS.get(chat_id)
+    if not dq:
+        return None
+    try:
+        return dq[-1] if len(dq) else None
+    except Exception:
+        return None
 
 def save_outgoing_message(chat_id: int, text: str, bot_display_name: str = "Ассистент") -> None:
     """Track what the bot answered so the transcript stays balanced."""
@@ -179,7 +205,7 @@ def should_answer(message: types.Message, bot_username: str) -> bool:
                 mention_text = text[entity.offset: entity.offset + entity.length]
                 if mention_text.lstrip("@").lower() == bot_username:
                     return True
-    BOT_ADDRESS_RE = re.compile(r'(?i)(?<!\w)(?:нейро-?бот(?:ик|яра)?|бот(?:ик|яра)?)(?!\w)')
+    BOT_ADDRESS_RE = re.compile(r'(?i)(?<!\w)(?:нейро-?бот(?:ик|яра)?|бот(?:ик|яра)?|бридж(?:ик)?)(?!\w)')
     QUESTION_MARK_RE = re.compile(r'\?')
     INTERROGATIVE_RE = re.compile(
         r'(?i)\b('

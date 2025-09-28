@@ -62,7 +62,7 @@ async def cmd_start(message: types.Message):
     id = message.from_user.id
     username = (message.from_user.username or f"{message.from_user.first_name}")
     if await is_subscribed(id):
-        await message.reply(f"Привет, @{username}!\nМожешь писать мне свои вопросы\nОбращайся ко мне - нейробот или бот")
+        await message.reply(f"Привет, @{username}!\nМожешь писать мне свои вопросы\nОбращайся ко мне - бриджик")
         return
 
     kb = types.InlineKeyboardMarkup(inline_keyboard=[
@@ -169,7 +169,7 @@ async def callback_any(query: types.CallbackQuery):
         return
 
     if await is_subscribed(query.from_user.id):
-        await query.message.reply(f"Привет, @{username}!\nМожешь писать мне свои вопросы\nОбращайся ко мне - нейробот или бот")
+        await query.message.reply(f"Привет, @{username}!\nМожешь писать мне свои вопросы\nОбращайся ко мне - бриджик")
     else:
         await query.message.reply("Подписка не найдена! Убедитесь, что подписаны на канал", show_alert=True)
 
@@ -180,7 +180,7 @@ async def cmd_player(message: types.Message):
     Если ник не указан, пробуем использовать Telegram @username отправителя."""
     id = message.from_user.id
     if not await is_subscribed(id):
-        await message.reply("Подпишитесь на @MineBridgeOfficial, чтобы пользоваться ботом")
+        await message.reply("Подпишитесь на @MineBridgeOfficial, чтобы пользоваться бриджиком")
         utils.save_incoming_message(message)
         return
     
@@ -215,6 +215,12 @@ async def cmd_player(message: types.Message):
 async def auto_reply(message: types.Message):
     """RU: Автоответ ИИ — отвечает, когда сообщение адресовано боту."""
     if not message.text:
+        # RU: Сохраняем известные нетекстовые данные (в т.ч. стикеры), но не отвечаем
+        try:
+            if getattr(message, "sticker", None) is not None:
+                utils.save_incoming_sticker(message)
+        except Exception:
+            pass
         utils.save_incoming_message(message)
         return
     
@@ -234,13 +240,13 @@ async def auto_reply(message: types.Message):
     is_group = ct_name in ("GROUP", "SUPERGROUP")
 
     if is_group and not utils.should_answer(message, bot_username):
-        logging.info("Пропущено (но сохранено) сообщение без упоминания бота или ответа на бота (группа)")
+        logging.info("Пропущено (но сохранено) сообщение без упоминания бриджика или ответа на бриджик (группа)")
         utils.save_incoming_message(message)
         return
     
     id = message.from_user.id
     if not await is_subscribed(id):
-        await message.reply("Подпишитесь на @MineBridgeOfficial, чтобы пользоваться ботом")
+        await message.reply("Подпишитесь на @MineBridgeOfficial, чтобы пользоваться бриджиком")
         utils.save_incoming_message(message)
         return
 
@@ -256,6 +262,7 @@ async def auto_reply(message: types.Message):
         conv_key = utils.make_key(message)
 
         sys_prompt = utils.load_system_prompt_for_chat(message.chat)
+        sys_prompt += "\n\nПоддерживаются теги [[photo:...]] и [[sticker:...]] (file_id/alias/last)."
         sys_prompt += "\n\nВажно: Используй HTML-разметку для форматирования ответа (<b>, <i>, <code>, <s>, <u>, <pre>). MarkDown НЕЛЬЗЯ! Все ссылки вставляй сразу в текст <a href=""></a>"
 
         rag_ctx = ""
