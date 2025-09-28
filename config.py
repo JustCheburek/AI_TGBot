@@ -79,7 +79,10 @@ STICKERS: dict[str, str] = {
     "кот качает головой": "CAACAgIAAxkBAAEPdHJo19H_3wuTPMITxs88zV7bruAn9gAC-z8AAq6uoEi8wbAnaQ14ZDYE",
     "понял осознал": "CAACAgIAAxkBAAEPdHRo19ITIiiTVs23V53PR-ofKHZ6egACej4AAqBFoUjbnntNL52jzDYE",
     "мозги мёрзнут": "CAACAgIAAxkBAAEPdHZo19JixuhFPL1Yn5kKESa8OV0dIwACAicAArwU8UrPXAIByUQcjjYE",
-    "порево": "CAACAgIAAxkBAAEPdHho19J3XIG66Onpdlh7azH6zk1ZeQAC5CYAAuDg8ErT0gytemmbSjYE"
+    "порево": "CAACAgIAAxkBAAEPdHho19J3XIG66Onpdlh7azH6zk1ZeQAC5CYAAuDg8ErT0gytemmbSjYE",
+    "пон": "CAACAgIAAxkBAAEPdsxo2LIEJfGB0EKt2ds-3B1m6DmY8wACU1IAApN08Emwj5nw-krF-TYE",
+    "покажи жопа": "CAACAgIAAxkBAAEPds5o2LaV739UX29Bmr32VZElS_7ebAAC5QMAAuNuOhkzeLGCxEclKzYE",
+    "ахаха оой": "CAACAgIAAxkBAAEPdtBo2LgOEIfvyO8Ir2RhDkjZMaMpRgACn2kAAo1l8EryJ35lqVbCeTYE"
 }
 
 # RU: Проверка обязательных переменных окружения
