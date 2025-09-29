@@ -173,9 +173,6 @@ def _read_txt_prompt(path: Path) -> str:
     text = raw.replace("\r\n", "\n").replace("\r", "\n").strip()
     _PROMPT_CACHE[cache_key] = (mtime, text)
     
-    text += "\n\nПоддерживаются теги [[photo:...]] и [[sticker:...]] (file_id/alias/last)."
-    text += "\n\nВажно: Используй HTML-разметку для форматирования ответа (<b>, <i>, <code>, <s>, <u>, <pre>). MarkDown НЕЛЬЗЯ! Все ссылки вставляй сразу в текст <a href=""></a>"
-    
     return text
 
 def load_system_prompt_for_chat(chat: types.Chat) -> str:
