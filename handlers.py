@@ -197,9 +197,10 @@ async def cmd_player(message: types.Message):
     """/player [nick] — получить данные игрока из MineBridge API.
     Если ник не указан, пробуем использовать Telegram @username отправителя."""
     id = message.from_user.id
+    text = (message.text or "").strip()
     if not await is_subscribed(id):
         await message.reply("Подпишитесь на @MineBridgeOfficial, чтобы пользоваться бриджиком")
-        utils.save_incoming_message(message)
+        utils.save_incoming_message(message, text)
         return
     
     text = (message.text or "").strip()
@@ -231,7 +232,7 @@ async def cmd_player(message: types.Message):
 @dp.message()
 async def auto_reply(message: types.Message):
     """RU: Автоответ ИИ — отвечает, когда сообщение адресовано боту."""
-    incoming_text = (getattr(message, "text", None) or getattr(message, "caption", None) or "").strip()
+    text = (getattr(message, "text", None) or getattr(message, "caption", None) or "").strip()
     has_photo = bool(getattr(message, "photo", None))
     has_image_doc = bool(getattr(message, "document", None) and str(getattr(message.document, "mime_type", "")).startswith("image/"))
     has_image = has_photo or has_image_doc
@@ -256,24 +257,18 @@ async def auto_reply(message: types.Message):
                 resp = await client.get(url)
                 resp.raise_for_status()
                 audio_bytes = resp.content
-            incoming_text = await handlers_helpers.transcribe_voice_gemini(audio_bytes, mime)
+            text = await handlers_helpers.transcribe_voice_gemini(audio_bytes, mime)
         except Exception:
             logging.exception("voice transcription flow failed")
-    if not incoming_text and not has_image:
+    if not text and not has_image:
         # RU: Сохраняем известные нетекстовые данные (в т.ч. стикеры), но не отвечаем
-        try:
-            sticker = getattr(message, "sticker", None)
-            if sticker is not None:
-                utils.save_incoming_sticker(message)
-        except Exception:
-            pass
-        utils.save_incoming_message(message)
+        utils.save_incoming_message(message, text)
         return
     
     id = getattr(message.from_user, "id", None)
     if id is not None and utils.is_user_frozen(id):
         logging.info("Auto replies are temporarily frozen for user %s", id)
-        utils.save_incoming_message(message)
+        utils.save_incoming_message(message, text)
         return
 
     # RU: Надёжно определяем тип чата (aiogram может вернуть enum или строку)
@@ -287,13 +282,13 @@ async def auto_reply(message: types.Message):
 
     if is_group and not utils.should_answer(message, bot_username):
         logging.info("Пропущено (но сохранено) сообщение без упоминания бриджика или ответа на бриджик (группа)")
-        utils.save_incoming_message(message)
+        utils.save_incoming_message(message, text)
         return
     
     id = message.from_user.id
     if not await is_subscribed(id):
         await message.reply("Подпишитесь на @MineBridgeOfficial, чтобы пользоваться бриджиком")
-        utils.save_incoming_message(message)
+        utils.save_incoming_message(message, text)
         return
 
     try:
@@ -319,7 +314,7 @@ async def auto_reply(message: types.Message):
         try:
             # Получаем RAG контекст (если включён)
             if config.RAG_ENABLED:
-                rag_ctx = await rag.build_full_context(incoming_text, username)
+                rag_ctx = await rag.build_full_context(text, username)
         except Exception:
             logging.exception("RAG: failed to build context")
 
@@ -347,7 +342,7 @@ async def auto_reply(message: types.Message):
                 # Run image download and (optionally) RAG in parallel
                 tasks = [asyncio.create_task(_download_image())]
                 if config.RAG_ENABLED and not rag_ctx:
-                    tasks.append(asyncio.create_task(rag.build_full_context(incoming_text, username)))
+                    tasks.append(asyncio.create_task(rag.build_full_context(text, username)))
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 image_bytes = results[0]
                 if isinstance(image_bytes, Exception):
@@ -360,7 +355,7 @@ async def auto_reply(message: types.Message):
                         rag_ctx = rag_res
 
                 answer = await handlers_helpers.complete_openai(
-                    incoming_text,
+                    text,
                     username,
                     conv_key,
                     sys_prompt,
@@ -374,7 +369,7 @@ async def auto_reply(message: types.Message):
                 answer = "Не удалось обработать изображение. Попробуй ещё раз прислать фото или добавь подпись."
         else:
             answer = await handlers_helpers.complete_openai(
-                incoming_text,
+                text,
                 username,
                 conv_key,
                 sys_prompt,

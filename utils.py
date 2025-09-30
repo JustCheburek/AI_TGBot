@@ -70,10 +70,9 @@ def _author_from(msg: types.Message) -> str:
         return "неизвестно"
     return (getattr(user, "username", None) or getattr(user, "first_name", "") or "безымянный")
 
-def save_incoming_message(message: types.Message) -> None:
+def save_incoming_message(message: types.Message, text: str) -> None:
     """RU: Записывает сообщение пользователя в буфер транскрипта чата."""
     chat_id = message.chat.id
-    text = (message.text or "").strip()
     author = _author_from(message)
     is_bot = bool(getattr(message.from_user, "is_bot", False))
     if not text:
@@ -84,33 +83,16 @@ def save_incoming_message(message: types.Message) -> None:
         elif message.document:
             text = f"Документ: {message.document.file_id}"
         elif message.voice:
-            text = f"Голосовое сообщение: {message.voice.file_id}"
+            text = f"Голосовое сообщение (текст не распознан): {message.voice.file_id}"
         elif message.video:
             text = f"Видео: {message.video.file_id}"
         elif message.audio:
             text = f"Аудио: {message.audio.file_id}"
+        elif message.sticker:
+            text = f"Стикер {message.sticker.emoji}: {message.sticker.file_id}"
         else:
             return
     CHAT_LOGS[chat_id].append((author, is_bot, _shorten(text)))
-
-def save_incoming_sticker(message: types.Message) -> None:
-    """RU: Сохраняет file_id присланного стикера для дальнейшего копирования."""
-    try:
-        st = getattr(message, "sticker", None)
-        if not st:
-            return
-        
-        fid = getattr(st, "file_id", None)
-        emoji = getattr(st, "emoji", None)
-        if not fid or not emoji:
-            return
-        
-        chat_id = message.chat.id
-        author = _author_from(message)
-        is_bot = bool(getattr(message.from_user, "is_bot", False))
-        CHAT_LOGS[chat_id].append((author, is_bot, f"Стикер {emoji}: {fid}"))
-    except Exception:
-        logging.exception("failed to save incoming sticker")
 
 def save_outgoing_message(chat_id: int, text: str, bot_display_name: str = "Ассистент") -> None:
     """Track what the bot answered so the transcript stays balanced."""

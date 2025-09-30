@@ -45,7 +45,7 @@ async def complete_openai(
     if use_thread and message is not None:
         # Чат
         input_with_ctx = await utils.build_input_from_chat_thread(message, prompt, name)
-        utils.save_incoming_message(message)
+        utils.save_incoming_message(message, text)
     else:
         # Личка
         input_with_ctx = utils.build_input_with_history(conv_key, prompt, name)
