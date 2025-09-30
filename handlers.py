@@ -236,7 +236,7 @@ async def auto_reply(message: types.Message):
     has_photo = bool(getattr(message, "photo", None))
     has_image_doc = bool(getattr(message, "document", None) and str(getattr(message.document, "mime_type", "")).startswith("image/"))
     has_image = has_photo or has_image_doc
-    has_voice = bool(getattr(message, "voice", None))
+    has_voice = bool(getattr(message, "voice", None)) or bool(getattr(message, "audio", None) and str(getattr(message.audio, "mime_type", "")).startswith("audio/"))
 
     # Voice transcription (runs even if bot is not addressed)
     if has_voice:
