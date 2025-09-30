@@ -83,7 +83,16 @@ STICKERS: dict[str, str] = {
     "порево": "CAACAgIAAxkBAAEPdHho19J3XIG66Onpdlh7azH6zk1ZeQAC5CYAAuDg8ErT0gytemmbSjYE",
     "пон": "CAACAgIAAxkBAAEPdsxo2LIEJfGB0EKt2ds-3B1m6DmY8wACU1IAApN08Emwj5nw-krF-TYE",
     "покажи жопа": "CAACAgIAAxkBAAEPds5o2LaV739UX29Bmr32VZElS_7ebAAC5QMAAuNuOhkzeLGCxEclKzYE",
-    "ахаха оой": "CAACAgIAAxkBAAEPdtBo2LgOEIfvyO8Ir2RhDkjZMaMpRgACn2kAAo1l8EryJ35lqVbCeTYE"
+    "ахаха оой": "CAACAgIAAxkBAAEPdtBo2LgOEIfvyO8Ir2RhDkjZMaMpRgACn2kAAo1l8EryJ35lqVbCeTYE",
+    "на кота падает бомба": "CAACAgIAAxkBAAEPedho277CHhKyEIpP_uv3q_HTom0I1wAC0R4AAmskwEvcFTxGmIq-aDYE",
+    "ёжик кушает": "CAACAgIAAxkBAAEPedZo276eNLuYEjK6qs_nLREhlsnzsAACNBIAAhPX2EsAAbFTK7Zm0XQ2BA",
+    "избивание": "CAACAgIAAxkBAAEPedpo278keWMqpYuB2NzkRuUWWE8hrwACpWkAAouCuUsz-7BQnjwGrjYE",
+    "крутой школьник с битой": "CAACAgIAAxkBAAEPedxo2788zONHyeNbN-ZjcWRcISVJwAACNwADCouFHhLbTCP_OKFzNgQ",
+    "голем повесился": "CAACAgIAAxkBAAEPed5o279XwOiAvcDWnNrD54UKEa8V1AACSwADCouFHp346BXWmq2HNgQ",
+    "потеет": 'CAACAgIAAxkBAAEPeeBo279yJ8elcCUszK0VopehIQwowwACz2kAAupcuUtMpGjn_EjAyDYE',
+    "пепе с мечами": "CAACAgIAAxkBAAEPeeJo27-LuwxdCeZhkOe9LkLQXr6yggACVwADDnr7Ch9ftelV4vz7NgQ",
+    "спидрань отсюда": "CAACAgIAAxkBAAEPeeRo27-ilQNaP9EPQrixhPv8D-1BywACO0QAAkj6kUrF3ZvhLYuXvjYE",
+    "бан": "CAACAgIAAxkBAAEPeeZo27_Me2GBKJdfM2jXU4UFTNwG1gACTlkAAnujaUjYydCsai0IJTYE"
 }
 
 # RU: Проверка обязательных переменных окружения

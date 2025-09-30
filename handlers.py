@@ -1,5 +1,6 @@
 ﻿# handlers.py
 import logging
+import asyncio
 import time
 import re
 import httpx
@@ -331,16 +332,33 @@ async def auto_reply(message: types.Message):
                 else:
                     file_id = message.document.file_id
                     mime = (message.document.mime_type or "image/jpeg")
-                fobj = await bot.get_file(file_id)
-                file_path = getattr(fobj, "file_path", None)
-                if not file_path:
-                    raise RuntimeError("missing file_path")
-                url = f"https://api.telegram.org/file/bot{config.BOT_TOKEN}/{file_path}"
-                timeout = httpx.Timeout(20.0, connect=10.0, read=20.0)
-                async with httpx.AsyncClient(timeout=timeout) as client:
-                    resp = await client.get(url)
-                    resp.raise_for_status()
-                    image_bytes = resp.content
+                async def _download_image() -> bytes:
+                    fobj = await bot.get_file(file_id)
+                    file_path = getattr(fobj, "file_path", None)
+                    if not file_path:
+                        raise RuntimeError("missing file_path")
+                    url = f"https://api.telegram.org/file/bot{config.BOT_TOKEN}/{file_path}"
+                    timeout = httpx.Timeout(20.0, connect=10.0, read=20.0)
+                    async with httpx.AsyncClient(timeout=timeout) as client:
+                        resp = await client.get(url)
+                        resp.raise_for_status()
+                        return resp.content
+
+                # Run image download and (optionally) RAG in parallel
+                tasks = [asyncio.create_task(_download_image())]
+                if config.RAG_ENABLED and not rag_ctx:
+                    tasks.append(asyncio.create_task(rag.build_full_context(incoming_text, username)))
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                image_bytes = results[0]
+                if isinstance(image_bytes, Exception):
+                    raise image_bytes
+                if len(results) > 1:
+                    rag_res = results[1]
+                    if isinstance(rag_res, Exception):
+                        logging.exception("RAG: failed to build context")
+                    else:
+                        rag_ctx = rag_res
+
                 answer = await handlers_helpers.complete_openai(
                     incoming_text,
                     username,
@@ -349,7 +367,7 @@ async def auto_reply(message: types.Message):
                     rag_ctx,
                     message,
                     image_bytes=image_bytes,
-                    mime_type=mime,
+                    mime_type=mime
                 )
             except Exception:
                 logging.exception("vision flow failed")
@@ -361,7 +379,7 @@ async def auto_reply(message: types.Message):
                 conv_key,
                 sys_prompt,
                 rag_ctx,
-                message,
+                message
             )
 
         await msgs.long_text(msg, message, answer)

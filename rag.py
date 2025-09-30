@@ -158,9 +158,14 @@ async def build_full_context(
     """RU: Собирает динамический контекст сервера, данные игрока и фрагменты RAG."""
     sections: list[str] = []
 
+    # Start independent requests in parallel
+    status_task = asyncio.create_task(mc.fetch_status())
+    search_task = asyncio.create_task(search(user_query, k=k))
+    player_task = asyncio.create_task(fetch_player_by_nick(username)) if username else None
+
     # RU: Динамический контекст сервера
     try:
-        payload = await mc.fetch_status()
+        payload = await status_task
         server_ctx = mc.format_status_text(payload)
         if server_ctx:
             sections.append(f"Пиши про статус, только когда просят\n{server_ctx}\n")
@@ -170,7 +175,7 @@ async def build_full_context(
     # RU: Динамический контекст игрока
     if username:
         try:
-            player_info = await fetch_player_by_nick(username)
+            player_info = await player_task
             if player_info:
                 sections.append(f"Игрок (из MineBridge API):\nИспользуй данные аккаунта, только когда просят\n{json.dumps(player_info, ensure_ascii=False)}\n")
         except Exception:
@@ -179,7 +184,7 @@ async def build_full_context(
     sections.append(f"Текущая дата: {datetime.now()}")
 
     # RU: База знаний через семантический поиск
-    results = await search(user_query, k=k)
+    results = await search_task
     if results:
         total = 0
         kb_parts: list[str] = []
