@@ -131,7 +131,7 @@ async def transcribe_voice_gemini(audio_bytes: bytes, mime_type: str | None = No
                 ], generation_config={"temperature": 0})
             resp = await loop.run_in_executor(None, _sync_call)
         text = (getattr(resp, "text", None) or "").strip()
-        return text or None
+        return f"Голосовое сообщение: {text}"
     except Exception:
         logging.exception("Gemini ASR failed")
         return None

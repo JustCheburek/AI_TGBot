@@ -28,7 +28,6 @@ ChatLine = Tuple[str, bool, str]
 CHAT_LOGS: Dict[int, Deque[ChatLine]] = defaultdict(
     lambda: deque(maxlen=config.GROUP_MAX_MESSAGES)
 )
-STICKER_LOGS: Dict[int, Deque[str]] = defaultdict(lambda: deque(maxlen=50))
 
 
 def _shorten(s: str, limit: int = 400) -> str:
@@ -100,23 +99,18 @@ def save_incoming_sticker(message: types.Message) -> None:
         st = getattr(message, "sticker", None)
         if not st:
             return
+        
         fid = getattr(st, "file_id", None)
-        if not fid:
+        emoji = getattr(st, "emoji", None)
+        if not fid or not emoji:
             return
+        
         chat_id = message.chat.id
-        STICKER_LOGS[chat_id].append(fid)
+        author = _author_from(message)
+        is_bot = bool(getattr(message.from_user, "is_bot", False))
+        CHAT_LOGS[chat_id].append((author, is_bot, f"Стикер {emoji}: {fid}"))
     except Exception:
         logging.exception("failed to save incoming sticker")
-
-def get_last_sticker(chat_id: int) -> Optional[str]:
-    """RU: Возвращает последний известный стикер file_id для чата (если есть)."""
-    dq = STICKER_LOGS.get(chat_id)
-    if not dq:
-        return None
-    try:
-        return dq[-1] if len(dq) else None
-    except Exception:
-        return None
 
 def save_outgoing_message(chat_id: int, text: str, bot_display_name: str = "Ассистент") -> None:
     """Track what the bot answered so the transcript stays balanced."""

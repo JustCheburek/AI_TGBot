@@ -186,10 +186,6 @@ async def _search_image_online(query: str) -> BufferedInputFile | None:
         logging.exception("image search failed for query: %s", q)
     return None
 
-
-
-
-
 async def _resolve_photo_payload(payload: str) -> str | FSInputFile | BufferedInputFile | None:
     """RU: Преобразует плейсхолдер [[photo:...]] в URL или файл для отправки."""
     target = (payload or "").strip()
@@ -207,10 +203,6 @@ async def _resolve_sticker_payload(payload: str, chat_id: int) -> str | None:
     p = (payload or "").strip()
     if not p:
         return None
-    low = p.lower()
-    if low in {"last", "copy"}:
-        from utils import get_last_sticker
-        return get_last_sticker(chat_id)
     # алиас из конфигурации или прямой file_id
     if isinstance(getattr(config, "STICKERS", None), dict):
         if p in config.STICKERS:

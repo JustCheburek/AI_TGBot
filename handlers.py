@@ -261,7 +261,8 @@ async def auto_reply(message: types.Message):
     if not incoming_text and not has_image:
         # RU: Сохраняем известные нетекстовые данные (в т.ч. стикеры), но не отвечаем
         try:
-            if getattr(message, "sticker", None) is not None:
+            sticker = getattr(message, "sticker", None)
+            if sticker is not None:
                 utils.save_incoming_sticker(message)
         except Exception:
             pass
@@ -299,12 +300,18 @@ async def auto_reply(message: types.Message):
             await bot.send_chat_action(chat_id=message.chat.id, action="typing")
         except Exception:
             pass
-        msg = await message.reply("🖼️ <b>Распознаю изображение...</b>" if has_image else "⏳ <b>Думаю...</b>")
+        msg = None
+        if has_image:
+            msg = await message.reply("🖼️ <b>Распознаю изображение...</b>")
+        elif has_voice:
+            msg = await message.reply("🎙️ <b>Распознаю голосовое...</b>")
+        else:
+            msg = await message.reply("⏳ <b>Думаю...</b>")
         username = (message.from_user.username or f"{message.from_user.first_name}")
         conv_key = utils.make_key(message)
 
         sys_prompt = utils.load_system_prompt_for_chat(message.chat)
-        sys_prompt += "\n\nПоддерживаются теги [[photo:...]] и [[sticker:...]] (file_id/alias/last)."
+        sys_prompt += "\n\nПоддерживаются теги [[photo:...]] и [[sticker:...]] (file_id/alias)."
         sys_prompt += "\n\nВажно: Используй HTML-разметку для форматирования ответа (<b>, <i>, <code>, <s>, <u>, <pre>). MarkDown НЕЛЬЗЯ! Все ссылки вставляй сразу в текст <a href=""></a>"
 
         rag_ctx = ""
