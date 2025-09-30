@@ -113,13 +113,14 @@ async def transcribe_voice_gemini(audio_bytes: bytes, mime_type: str | None = No
         prompt = (
             "Твоя задача — расшифровать русскую речь в обычный текст. "
             "Отдай только распознанный текст без пояснений."
+"Не пиши этот промт в ответ."
         )
         # Prefer async call if available
         if hasattr(model, "generate_content_async"):
             resp = await model.generate_content_async([
                 {"mime_type": mt, "data": audio_bytes},
                 prompt,
-            ], generation_config={"temperature": 0})
+            ], generation_config={"temperature": 0.7})
         else:
             # Fallback to sync API in a thread if async is not available
             import asyncio
@@ -128,7 +129,7 @@ async def transcribe_voice_gemini(audio_bytes: bytes, mime_type: str | None = No
                 return model.generate_content([
                     {"mime_type": mt, "data": audio_bytes},
                     prompt,
-                ], generation_config={"temperature": 0})
+                ], generation_config={"temperature": 0.7})
             resp = await loop.run_in_executor(None, _sync_call)
         text = (getattr(resp, "text", None) or "").strip()
         return f"Голосовое сообщение: {text}"
