@@ -150,7 +150,7 @@ async def search(query: str, k: int = config.RAG_TOP_K):
     return [(RAG_CHUNKS[i], float(sims[i])) for i in top_idx]
 
 async def build_full_context(
-    user_query: str,
+    prompt: str,
     username: str | None = None,
     k: int = config.RAG_TOP_K,
     max_chars: int = 2000,
@@ -160,7 +160,7 @@ async def build_full_context(
 
     # Start independent requests in parallel
     status_task = asyncio.create_task(mc.fetch_status())
-    search_task = asyncio.create_task(search(user_query, k=k))
+    search_task = asyncio.create_task(search(prompt, k=k))
     player_task = asyncio.create_task(fetch_player_by_nick(username)) if username else None
 
     # RU: Динамический контекст сервера
