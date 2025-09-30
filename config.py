@@ -13,6 +13,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY")
 CHANNEL = os.getenv("CHANNEL", "@MineBridgeOfficial")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # Память
 GROUP_MAX_MESSAGES = 12
@@ -94,3 +95,5 @@ if not MC_SERVER_HOST:
     raise SystemExit("Set MC_SERVER_HOST in .env")
 if not JINA_KEY:
     raise RuntimeError("Set JINA_API_KEY in .env")
+if not GOOGLE_API_KEY:
+    raise RuntimeError("Set GOOGLE_API_KEY in .env")

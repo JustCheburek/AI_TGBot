@@ -234,6 +234,30 @@ async def auto_reply(message: types.Message):
     has_photo = bool(getattr(message, "photo", None))
     has_image_doc = bool(getattr(message, "document", None) and str(getattr(message.document, "mime_type", "")).startswith("image/"))
     has_image = has_photo or has_image_doc
+    has_voice = bool(getattr(message, "voice", None))
+
+    # Voice transcription (runs even if bot is not addressed)
+    if has_voice:
+        try:
+            try:
+                await bot.send_chat_action(chat_id=message.chat.id, action="typing")
+            except Exception:
+                pass
+            fid = message.voice.file_id
+            mime = (getattr(message.voice, "mime_type", None) or "audio/ogg")
+            fobj = await bot.get_file(fid)
+            file_path = getattr(fobj, "file_path", None)
+            if not file_path:
+                raise RuntimeError("missing voice file_path")
+            url = f"https://api.telegram.org/file/bot{config.BOT_TOKEN}/{file_path}"
+            timeout = httpx.Timeout(30.0, connect=10.0, read=30.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                audio_bytes = resp.content
+            incoming_text = await handlers_helpers.transcribe_voice_gemini(audio_bytes, mime)
+        except Exception:
+            logging.exception("voice transcription flow failed")
     if not incoming_text and not has_image:
         # RU: Сохраняем известные нетекстовые данные (в т.ч. стикеры), но не отвечаем
         try:
@@ -310,27 +334,27 @@ async def auto_reply(message: types.Message):
                     resp = await client.get(url)
                     resp.raise_for_status()
                     image_bytes = resp.content
-                answer = await handlers_helpers.complete_openai_vision(
-                    image_bytes,
-                    mime,
+                answer = await handlers_helpers.complete_openai(
                     incoming_text,
                     username,
                     conv_key,
                     sys_prompt,
-                    rag_ctx=rag_ctx,
-                    message=message,
+                    rag_ctx,
+                    message,
+                    image_bytes=image_bytes,
+                    mime_type=mime,
                 )
             except Exception:
                 logging.exception("vision flow failed")
                 answer = "Не удалось обработать изображение. Попробуй ещё раз прислать фото или добавь подпись."
         else:
-            answer = await handlers_helpers.complete_openai_nostream(
+            answer = await handlers_helpers.complete_openai(
                 incoming_text,
                 username,
                 conv_key,
                 sys_prompt,
-                rag_ctx=rag_ctx,
-                message=message,
+                rag_ctx,
+                message,
             )
 
         await msgs.long_text(msg, message, answer)
