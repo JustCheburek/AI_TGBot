@@ -83,7 +83,7 @@ async def complete_openai(
     while True:
         try:
             resp = await openai_client.chat.completions.create(
-                model="x-ai/grok-4-fast:free",
+                model="x-ai/grok-4-fast",
                 messages=messages,
                 temperature=1,
             )
